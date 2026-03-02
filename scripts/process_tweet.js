@@ -316,40 +316,10 @@ function detectArticleUrl(tweet) {
 }
 
 async function fetchArticleContent(articleUrl) {
-  try {
-    console.log(`  Fetching article content from: ${articleUrl}`);
-    const res = await httpGet(articleUrl);
-    const html = res.body;
-    
-    // Extract text content from the HTML (basic extraction)
-    // Remove script and style tags
-    let text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
-    text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-    
-    // Extract content from article tags or main content area
-    const articleMatch = text.match(/<article[^>]*>([\s\S]*?)<\/article>/i);
-    if (articleMatch) {
-      text = articleMatch[1];
-    }
-    
-    // Extract title
-    const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/i);
-    const title = titleMatch ? titleMatch[1].replace(/ \/ X$/, '').replace(/ on X$/, '').trim() : '';
-
-    // Convert remaining HTML to text
-    text = text.replace(/<br\s*\/?>/gi, '\n');
-    text = text.replace(/<\/p>/gi, '\n\n');
-    text = text.replace(/<\/h[1-6]>/gi, '\n\n');
-    text = text.replace(/<[^>]+>/g, '');
-    text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-    text = text.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
-    text = text.replace(/\n{3,}/g, '\n\n').trim();
-    
-    return { title, content: text || null };
-  } catch (e) {
-    console.error(`  Failed to fetch article: ${e.message}`);
-    return { title: '', content: null };
-  }
+  // X/Twitter articles are JavaScript-rendered SPAs. Server-side fetching
+  // cannot extract their content. We note this clearly in the markdown.
+  console.log(`  Note: X articles require JavaScript rendering - content extraction not possible via server-side fetch`);
+  return { title: '', content: null };
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -478,17 +448,11 @@ saved_at: "${new Date().toISOString()}"
     if (i < tweetDataList.length - 1) md += '---\n\n';
   }
 
-  // If article, try to fetch article content
+  // If article, add article link section
   if (isArticle) {
-    md += `---\n\n## Article Content\n\n`;
-    md += `**Article URL**: [${articleUrl}](${articleUrl})\n\n`;
-    const { title, content } = await fetchArticleContent(articleUrl);
-    if (title) md += `**Title**: ${title}\n\n`;
-    if (content && content.length > 50) {
-      md += content + '\n\n';
-    } else {
-      md += `> *Article content could not be extracted automatically. Visit the link above to read the full article.*\n\n`;
-    }
+    md += `---\n\n## Article\n\n`;
+    md += `**Read the full article**: [${articleUrl}](${articleUrl})\n\n`;
+    md += `> *X/Twitter articles are JavaScript-rendered and cannot be archived server-side. Visit the link above to read the full article.*\n\n`;
   }
 
   // Quoted tweet

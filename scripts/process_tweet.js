@@ -213,7 +213,7 @@ async function fetchThreadTweets(tweet) {
     try {
       await sleep(5500); // rate limit
       const data = await fetchThreadContext(tweetId, cursor);
-      const replies = data.replies || [];
+      const replies = data.tweets || data.replies || [];
 
       for (const reply of replies) {
         if (reply.author && reply.author.userName === authorUsername) {

@@ -28,14 +28,7 @@ A fully decentralized, self-hosted solution to save tweets as markdown files in 
 1. Go to [twitterapi.io/dashboard](https://twitterapi.io/dashboard)
 2. Sign up and get your API key (~$0.15 per 1000 tweets)
 
-### 3. Add Twitter API Key as Repository Secret
-
-1. Go to your repository → **Settings** → **Secrets and variables** → **Actions**
-2. Click **New repository secret**
-3. Name: `TWITTER_API_KEY`
-4. Value: Your API key from twitterapi.io
-
-### 4. Create a Fine-Grained PAT (Repository-Scoped)
+### 3. Create a Fine-Grained PAT (Repository-Scoped)
 
 **This is more secure than account-wide tokens!**
 
@@ -46,10 +39,23 @@ A fully decentralized, self-hosted solution to save tweets as markdown files in 
 5. **Select your GetIt repository** from the dropdown
 6. **Permissions** → **Repository permissions**:
    - **Contents**: Read and write
+   - **Secrets**: Read and write (for automatic secret creation)
+   - **Actions**: Read and write (to trigger workflows)
    - **Metadata**: Read-only (auto-selected)
 7. Click **Generate token** and copy it
 
 > ⚠️ **Security Note**: This token can ONLY access your GetIt repository, not your other repos!
+
+### 4. Use the Frontend to Save Twitter API Key
+
+The frontend can **automatically create the GitHub Secret** for you:
+
+1. Open `frontend/index.html` in your browser
+2. Enter your repository, PAT, and Twitter API key
+3. Click **"🔐 Save Twitter Key to GitHub Secret"**
+4. The secret `TWITTER_API_KEY` will be securely created in your repository
+
+This uses **libsodium encryption** in your browser - the key is encrypted before being sent to GitHub.
 
 ### 5. Use the Frontend
 

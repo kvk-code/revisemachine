@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GetIt - Save Tweets to Your GitHub Repository</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/dist/modules/libsodium-wrappers.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -40,9 +41,9 @@
                 <div class="flex items-start gap-3">
                     <span class="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">2</span>
                     <div>
-                        <strong>Add Twitter API Key as repository secret</strong><br>
-                        Your repo → <strong>Settings</strong> → <strong>Secrets and variables</strong> → <strong>Actions</strong> → <strong>New repository secret</strong><br>
-                        Name: <code class="bg-white px-1 rounded">TWITTER_API_KEY</code> | Value: Your key from <a href="https://twitterapi.io/dashboard" target="_blank" class="text-purple-600 hover:underline">twitterapi.io</a>
+                        <strong>Get your Twitter API Key</strong><br>
+                        Sign up at <a href="https://twitterapi.io/dashboard" target="_blank" class="text-purple-600 hover:underline">twitterapi.io</a> and copy your API key (~$0.15 per 1000 tweets)<br>
+                        <span class="text-gray-500 text-xs">The frontend will automatically save it as a GitHub Secret for you!</span>
                     </div>
                 </div>
                 <div class="flex items-start gap-3">
@@ -51,7 +52,7 @@
                         <strong>Create a Fine-Grained PAT (scoped to your repo only)</strong><br>
                         <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" class="text-purple-600 hover:underline">Create token</a> → 
                         Repository access: <strong>Only select repositories</strong> → Select your repo → 
-                        Permissions: <strong>Contents: Read & Write</strong>
+                        Permissions: <strong>Contents: Read & Write</strong>, <strong>Secrets: Read & Write</strong>, <strong>Actions: Read & Write</strong>
                     </div>
                 </div>
             </div>
@@ -86,7 +87,7 @@
                         class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
                     <p class="text-xs text-gray-500 mt-1">
                         <strong>Recommended:</strong> Create a fine-grained token scoped to ONLY your GetIt repository.<br>
-                        Permissions needed: Contents (Read & Write), Metadata (Read)
+                        Permissions needed: Contents (Read & Write), Secrets (Read & Write), Actions (Read & Write)
                     </p>
                 </div>
 
@@ -101,10 +102,16 @@
                     <p class="text-xs text-gray-500 mt-1">From twitterapi.io dashboard (~$0.15 per 1000 tweets)</p>
                 </div>
 
-                <button onclick="saveConfig()" 
-                    class="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-6 rounded-lg transition-colors">
-                    💾 Save Configuration
-                </button>
+                <div class="flex gap-3">
+                    <button onclick="saveConfig()" 
+                        class="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-6 rounded-lg transition-colors">
+                        💾 Save to Browser
+                    </button>
+                    <button onclick="saveTwitterKeyAsSecret()" id="secret-btn"
+                        class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-lg transition-colors">
+                        🔐 Save Twitter Key to GitHub Secret
+                    </button>
+                </div>
                 
                 <div id="config-status" class="hidden text-sm mt-2"></div>
             </div>
@@ -167,6 +174,102 @@
     </footer>
 
     <script>
+        // Encrypt and create GitHub secret using libsodium
+        async function encryptSecret(publicKey, secretValue) {
+            await sodium.ready;
+            
+            // Decode the base64 public key
+            const publicKeyBytes = sodium.from_base64(publicKey, sodium.base64_variants.ORIGINAL);
+            
+            // Convert secret to bytes
+            const secretBytes = sodium.from_string(secretValue);
+            
+            // Encrypt using sealed box
+            const encryptedBytes = sodium.crypto_box_seal(secretBytes, publicKeyBytes);
+            
+            // Return as base64
+            return sodium.to_base64(encryptedBytes, sodium.base64_variants.ORIGINAL);
+        }
+
+        async function saveTwitterKeyAsSecret() {
+            const repo = document.getElementById('github-repo').value.trim();
+            const pat = document.getElementById('github-pat').value.trim();
+            const twitterKey = document.getElementById('twitter-api-key').value.trim();
+            
+            if (!repo || !pat || !twitterKey) {
+                showStatus('config-status', '❌ Please fill in all fields first', 'error');
+                return;
+            }
+            
+            if (!repo.includes('/')) {
+                showStatus('config-status', '❌ Repository must be in owner/repo format', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('secret-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="animate-pulse">⏳ Creating secret...</span>';
+            
+            try {
+                // Step 1: Get the repository's public key for secrets
+                const keyResponse = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/public-key`, {
+                    headers: {
+                        'Accept': 'application/vnd.github+json',
+                        'Authorization': `Bearer ${pat}`,
+                        'X-GitHub-Api-Version': '2022-11-28'
+                    }
+                });
+                
+                if (!keyResponse.ok) {
+                    const error = await keyResponse.json().catch(() => ({}));
+                    if (keyResponse.status === 403) {
+                        throw new Error('PAT needs "Secrets: Read & Write" permission');
+                    }
+                    throw new Error(error.message || 'Failed to get public key');
+                }
+                
+                const { key: publicKey, key_id: keyId } = await keyResponse.json();
+                
+                // Step 2: Encrypt the secret using libsodium
+                const encryptedValue = await encryptSecret(publicKey, twitterKey);
+                
+                // Step 3: Create or update the secret
+                const secretResponse = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/TWITTER_API_KEY`, {
+                    method: 'PUT',
+                    headers: {
+                        'Accept': 'application/vnd.github+json',
+                        'Authorization': `Bearer ${pat}`,
+                        'X-GitHub-Api-Version': '2022-11-28',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        encrypted_value: encryptedValue,
+                        key_id: keyId
+                    })
+                });
+                
+                if (secretResponse.status === 201 || secretResponse.status === 204) {
+                    // Also save to localStorage
+                    localStorage.setItem('getit_repo', repo);
+                    localStorage.setItem('getit_pat', pat);
+                    localStorage.setItem('getit_twitter_key', twitterKey);
+                    
+                    showStatus('config-status', `
+                        ✅ <strong>Twitter API Key saved as GitHub Secret!</strong><br>
+                        <span class="text-sm">The secret TWITTER_API_KEY has been securely stored in your repository.</span>
+                    `, 'success');
+                } else {
+                    const error = await secretResponse.json().catch(() => ({}));
+                    throw new Error(error.message || 'Failed to create secret');
+                }
+            } catch (error) {
+                showStatus('config-status', `❌ ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🔐 Save Twitter Key to GitHub Secret';
+            }
+        }
+
         // Load saved config on page load
         document.addEventListener('DOMContentLoaded', () => {
             const repo = localStorage.getItem('getit_repo');

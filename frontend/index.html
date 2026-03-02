@@ -26,10 +26,42 @@
 
     <!-- Main Content -->
     <main class="max-w-4xl mx-auto px-4 py-8">
+        <!-- First Time Setup Guide -->
+        <section class="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-6 mb-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">📖 First-Time Setup (Do This Once)</h2>
+            <div class="space-y-3 text-sm text-gray-700">
+                <div class="flex items-start gap-3">
+                    <span class="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">1</span>
+                    <div>
+                        <strong>Create your own copy of GetIt</strong><br>
+                        <a href="https://github.com/kvk-code/getit" target="_blank" class="text-purple-600 hover:underline">Go to GetIt repo</a> → Click <strong>"Use this template"</strong> → Name it (e.g., <code class="bg-white px-1 rounded">my-saved-tweets</code>) → Set to <strong>Private</strong>
+                    </div>
+                </div>
+                <div class="flex items-start gap-3">
+                    <span class="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">2</span>
+                    <div>
+                        <strong>Add Twitter API Key as repository secret</strong><br>
+                        Your repo → <strong>Settings</strong> → <strong>Secrets and variables</strong> → <strong>Actions</strong> → <strong>New repository secret</strong><br>
+                        Name: <code class="bg-white px-1 rounded">TWITTER_API_KEY</code> | Value: Your key from <a href="https://twitterapi.io/dashboard" target="_blank" class="text-purple-600 hover:underline">twitterapi.io</a>
+                    </div>
+                </div>
+                <div class="flex items-start gap-3">
+                    <span class="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">3</span>
+                    <div>
+                        <strong>Create a Fine-Grained PAT (scoped to your repo only)</strong><br>
+                        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" class="text-purple-600 hover:underline">Create token</a> → 
+                        Repository access: <strong>Only select repositories</strong> → Select your repo → 
+                        Permissions: <strong>Contents: Read & Write</strong>
+                    </div>
+                </div>
+            </div>
+            <p class="mt-4 text-xs text-gray-500">✅ Done? Now fill in the form below to start saving tweets!</p>
+        </section>
+
         <!-- Setup Section -->
         <section class="bg-white rounded-xl shadow-lg p-6 mb-6">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">⚙️ Setup (One-time Configuration)</h2>
-            <p class="text-gray-600 mb-4">Your credentials are stored locally in your browser and never sent to any server.</p>
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">⚙️ Your Configuration</h2>
+            <p class="text-gray-600 mb-4">Credentials are stored <strong>only in your browser</strong> (localStorage) and never sent to any server.</p>
             
             <div class="space-y-4">
                 <!-- GitHub Repository -->

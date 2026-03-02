@@ -327,7 +327,7 @@
         }
 
         // Load saved config on page load
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             const repo = localStorage.getItem('getit_repo');
             const pat = localStorage.getItem('getit_pat');
             const twitterKey = localStorage.getItem('getit_twitter_key');
@@ -339,6 +339,24 @@
             if (repo && pat && twitterKey) {
                 showStatus('config-status', '✅ Configuration loaded from browser storage', 'success');
             }
+            
+            // Check secret status on page load
+            if (repo && pat) {
+                await checkAndUpdateSecretStatus();
+            }
+            
+            // Add event listeners to check secret status when repo/pat changes
+            const repoInput = document.getElementById('github-repo');
+            const patInput = document.getElementById('github-pat');
+            
+            let debounceTimer;
+            const debouncedCheck = () => {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => checkAndUpdateSecretStatus(), 500);
+            };
+            
+            repoInput.addEventListener('blur', debouncedCheck);
+            patInput.addEventListener('blur', debouncedCheck);
         });
 
         function saveConfig() {

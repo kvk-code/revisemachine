@@ -308,129 +308,147 @@ function detectArticleUrl(tweet) {
 }
 
 async function fetchArticleContent(articleUrl) {
+  // Strategy 1: Try Puppeteer headless browser
+  const puppeteerResult = await fetchArticleViaPuppeteer(articleUrl);
+  if (puppeteerResult.content) return puppeteerResult;
+
+  // Strategy 2: Try oEmbed API (public, no auth needed)
+  const oembedResult = await fetchArticleViaOembed(articleUrl);
+  if (oembedResult.content) return oembedResult;
+
+  return { title: '', content: null };
+}
+
+async function fetchArticleViaOembed(articleUrl) {
+  try {
+    // The original tweet URL works with oEmbed even if the article URL doesn't
+    const tweetUrl = `https://x.com/${TWEET_URL.match(/x\.com\/([^/]+\/status\/\d+)/)?.[1] || ''}`;
+    const oembedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(tweetUrl)}&omit_script=true`;
+    console.log(`  Trying oEmbed: ${oembedUrl}`);
+    const res = await httpGet(oembedUrl);
+    if (res.statusCode === 200) {
+      const data = JSON.parse(res.body);
+      if (data.html) {
+        // Extract text from the oEmbed HTML
+        let text = data.html.replace(/<br\s*\/?>/gi, '\n');
+        text = text.replace(/<\/p>/gi, '\n\n');
+        text = text.replace(/<[^>]+>/g, '');
+        text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        text = text.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
+        text = text.replace(/\n{3,}/g, '\n\n').trim();
+        if (text.length > 50) {
+          console.log(`  oEmbed extracted: ${text.length} chars`);
+          return { title: data.author_name || '', content: text };
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`  oEmbed failed: ${e.message}`);
+  }
+  return { title: '', content: null };
+}
+
+async function fetchArticleViaPuppeteer(articleUrl) {
   let browser;
   try {
     console.log(`  Launching headless browser for article: ${articleUrl}`);
     const puppeteer = require('puppeteer');
     browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-             '--disable-gpu', '--window-size=1280,2000']
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
     const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 2000 });
-    // Set a realistic user agent so X doesn't block us
+    await page.setViewport({ width: 1280, height: 900 });
     await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
+    // Navigate to the article
     await page.goto(articleUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-
-    // Wait for content to render - try multiple selectors X might use
     await sleep(5000);
 
-    // Scroll to bottom to trigger lazy-loaded content
-    await page.evaluate(async () => {
-      const delay = ms => new Promise(r => setTimeout(r, ms));
-      for (let i = 0; i < 10; i++) {
-        window.scrollBy(0, 500);
-        await delay(300);
-      }
-      window.scrollTo(0, 0);
-    });
-    await sleep(2000);
-
-    // Dismiss any login modals / "sign up" popups by removing overlay elements
-    await page.evaluate(() => {
-      // Remove common X overlay/modal selectors
-      const overlays = document.querySelectorAll('[role="dialog"], [data-testid="sheetDialog"], [data-testid="mask"]');
-      overlays.forEach(el => el.remove());
-      // Remove any fixed/sticky overlays blocking content
-      document.querySelectorAll('*').forEach(el => {
-        const style = window.getComputedStyle(el);
-        if ((style.position === 'fixed' || style.position === 'sticky') &&
-            style.zIndex > 1 && el.tagName !== 'HEADER' && el.tagName !== 'NAV') {
-          el.remove();
-        }
-      });
-    });
-
-    // Extract content using a comprehensive approach
+    // Extract using multiple strategies, picking the best result
     const result = await page.evaluate(() => {
       const title = document.title || '';
 
-      // X articles use deeply nested divs. The most reliable approach
-      // is to find the main content container and use innerText, which
-      // preserves the visual text layout including all body paragraphs.
-
-      // Strategy 1: Look for article-specific containers
-      const candidates = [
-        document.querySelector('article'),
-        document.querySelector('[data-testid="article"]'),
-        document.querySelector('[role="article"]'),
-        // X often uses a main > div > div structure
-        document.querySelector('main [data-testid="primaryColumn"]'),
-        document.querySelector('main'),
-      ].filter(Boolean);
-
-      let bestContent = '';
-
-      for (const container of candidates) {
-        const text = container.innerText;
-        // Pick the container with the most content
-        if (text.length > bestContent.length) {
-          bestContent = text;
+      // Strategy A: Select specific text-bearing elements (headings + paragraphs + divs with text)
+      function extractViaElements() {
+        const selectors = 'article p, article h1, article h2, article h3, article h4, article h5, article h6, article li, article blockquote, article div[dir="auto"], article span[data-text="true"]';
+        let els = document.querySelectorAll(selectors);
+        if (els.length === 0) {
+          // Broaden: look in main or body
+          els = document.querySelectorAll('main p, main h1, main h2, main h3, main h4, main h5, main h6, main li, main div[dir="auto"]');
         }
+        if (els.length === 0) return '';
+
+        const seen = new Set();
+        const parts = [];
+        for (const el of els) {
+          const text = el.innerText.trim();
+          if (!text || text.length < 3 || seen.has(text)) continue;
+          seen.add(text);
+          const tag = el.tagName.toLowerCase();
+          if (tag.match(/^h[1-6]$/)) {
+            parts.push('#'.repeat(parseInt(tag[1])) + ' ' + text);
+          } else if (tag === 'blockquote') {
+            parts.push('> ' + text);
+          } else if (tag === 'li') {
+            parts.push('- ' + text);
+          } else {
+            parts.push(text);
+          }
+        }
+        return parts.join('\n\n');
       }
 
-      // Strategy 2: If we still don't have much, try getting all visible
-      // text blocks that look like article paragraphs
-      if (bestContent.length < 200) {
-        const allDivs = document.querySelectorAll('div[dir="auto"], span[dir="auto"], div[data-text="true"]');
-        const textBlocks = Array.from(allDivs)
-          .map(el => el.innerText.trim())
-          .filter(t => t.length > 20); // only meaningful text blocks
-        if (textBlocks.join('\n\n').length > bestContent.length) {
-          bestContent = textBlocks.join('\n\n');
+      // Strategy B: Get innerText from the largest content container
+      function extractViaInnerText() {
+        const candidates = [
+          document.querySelector('article'),
+          document.querySelector('[role="article"]'),
+          document.querySelector('main'),
+        ].filter(Boolean);
+
+        let best = '';
+        for (const c of candidates) {
+          const text = c.innerText;
+          if (text.length > best.length) best = text;
         }
+        return best;
       }
 
-      return { title, content: bestContent };
+      const fromElements = extractViaElements();
+      const fromInnerText = extractViaInnerText();
+
+      // Pick whichever gives more content
+      const content = fromElements.length > fromInnerText.length ? fromElements : fromInnerText;
+      return { title, content, fromElements: fromElements.length, fromInnerText: fromInnerText.length };
     });
-
-    // Take a screenshot for debugging (saved in media dir)
-    try {
-      await page.screenshot({ path: 'article_debug.png', fullPage: true });
-      console.log('  Saved debug screenshot: article_debug.png');
-    } catch (_) {}
 
     await browser.close();
 
     let title = result.title.replace(/ \/ X$/, '').replace(/ on X$/, '').trim();
+    console.log(`  Extraction results: elements=${result.fromElements} chars, innerText=${result.fromInnerText} chars`);
 
-    // Clean up the content: remove common X UI text
+    // Clean up X UI text from the content
     let content = result.content || '';
-    // Remove lines that are clearly UI elements
-    const uiPatterns = [
-      /^Sign up$/m, /^Log in$/m, /^Post$/m, /^Search$/m,
-      /^Relevant people$/m, /^What's happening$/m, /^Show more$/m,
-      /^Terms of Service$/m, /^Privacy Policy$/m, /^Cookie Policy$/m,
-      /^Trending now$/m, /^Who to follow$/m, /^Follow$/m,
-      /^Don't miss what's happening$/m, /^©\s*\d{4}\s*X Corp/m,
-    ];
-    for (const pattern of uiPatterns) {
-      content = content.replace(pattern, '');
-    }
-    // Collapse excessive blank lines
+    const uiLines = ['Sign up', 'Log in', 'Post', 'Search', 'Relevant people',
+      'What\'s happening', 'Show more', 'Terms of Service', 'Privacy Policy',
+      'Cookie Policy', 'Trending now', 'Who to follow', 'Follow',
+      'Don\'t miss what\'s happening', 'Imprint', 'Ads info'];
+    content = content.split('\n').filter(line => {
+      const trimmed = line.trim();
+      return trimmed.length > 0 && !uiLines.includes(trimmed) && !/^© \d{4} X Corp/.test(trimmed);
+    }).join('\n');
     content = content.replace(/\n{3,}/g, '\n\n').trim();
 
-    if (content.length > 200 && !content.includes('JavaScript is not available')) {
-      console.log(`  Extracted article content: ${content.length} chars`);
+    if (content.length > 100 && !content.includes('JavaScript is not available')) {
+      console.log(`  Article content extracted: ${content.length} chars`);
       return { title, content };
     }
 
-    console.log(`  Article content too short (${content.length} chars) or error page`);
+    console.log(`  Puppeteer content too short: ${content.length} chars`);
     return { title, content: null };
   } catch (e) {
-    console.error(`  Puppeteer article extraction failed: ${e.message}`);
+    console.error(`  Puppeteer failed: ${e.message}`);
     if (browser) try { await browser.close(); } catch (_) {}
     return { title: '', content: null };
   }

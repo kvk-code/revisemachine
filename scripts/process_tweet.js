@@ -314,68 +314,120 @@ async function fetchArticleContent(articleUrl) {
     const puppeteer = require('puppeteer');
     browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+             '--disable-gpu', '--window-size=1280,2000']
     });
     const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
+    await page.setViewport({ width: 1280, height: 2000 });
+    // Set a realistic user agent so X doesn't block us
+    await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    // Navigate and wait for the article content to render
-    await page.goto(articleUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+    await page.goto(articleUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // Wait a bit more for dynamic content
-    await sleep(3000);
+    // Wait for content to render - try multiple selectors X might use
+    await sleep(5000);
 
-    // Extract article content
-    const result = await page.evaluate(() => {
-      // Try to find the article element
-      const articleEl = document.querySelector('article') ||
-                        document.querySelector('[data-testid="tweetText"]') ||
-                        document.querySelector('[role="article"]') ||
-                        document.querySelector('main');
+    // Scroll to bottom to trigger lazy-loaded content
+    await page.evaluate(async () => {
+      const delay = ms => new Promise(r => setTimeout(r, ms));
+      for (let i = 0; i < 10; i++) {
+        window.scrollBy(0, 500);
+        await delay(300);
+      }
+      window.scrollTo(0, 0);
+    });
+    await sleep(2000);
 
-      const title = document.title || '';
-      let content = '';
-
-      if (articleEl) {
-        // Get all text content, preserving paragraph structure
-        const paragraphs = articleEl.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote');
-        if (paragraphs.length > 0) {
-          content = Array.from(paragraphs).map(p => {
-            const tag = p.tagName.toLowerCase();
-            const text = p.innerText.trim();
-            if (!text) return '';
-            if (tag.startsWith('h')) {
-              const level = parseInt(tag[1]);
-              return '#'.repeat(level) + ' ' + text;
-            }
-            if (tag === 'blockquote') return '> ' + text;
-            if (tag === 'li') return '- ' + text;
-            return text;
-          }).filter(Boolean).join('\n\n');
-        } else {
-          content = articleEl.innerText;
+    // Dismiss any login modals / "sign up" popups by removing overlay elements
+    await page.evaluate(() => {
+      // Remove common X overlay/modal selectors
+      const overlays = document.querySelectorAll('[role="dialog"], [data-testid="sheetDialog"], [data-testid="mask"]');
+      overlays.forEach(el => el.remove());
+      // Remove any fixed/sticky overlays blocking content
+      document.querySelectorAll('*').forEach(el => {
+        const style = window.getComputedStyle(el);
+        if ((style.position === 'fixed' || style.position === 'sticky') &&
+            style.zIndex > 1 && el.tagName !== 'HEADER' && el.tagName !== 'NAV') {
+          el.remove();
         }
-      } else {
-        // Fallback: grab all visible text from body
-        content = document.body.innerText;
+      });
+    });
+
+    // Extract content using a comprehensive approach
+    const result = await page.evaluate(() => {
+      const title = document.title || '';
+
+      // X articles use deeply nested divs. The most reliable approach
+      // is to find the main content container and use innerText, which
+      // preserves the visual text layout including all body paragraphs.
+
+      // Strategy 1: Look for article-specific containers
+      const candidates = [
+        document.querySelector('article'),
+        document.querySelector('[data-testid="article"]'),
+        document.querySelector('[role="article"]'),
+        // X often uses a main > div > div structure
+        document.querySelector('main [data-testid="primaryColumn"]'),
+        document.querySelector('main'),
+      ].filter(Boolean);
+
+      let bestContent = '';
+
+      for (const container of candidates) {
+        const text = container.innerText;
+        // Pick the container with the most content
+        if (text.length > bestContent.length) {
+          bestContent = text;
+        }
       }
 
-      return { title, content };
+      // Strategy 2: If we still don't have much, try getting all visible
+      // text blocks that look like article paragraphs
+      if (bestContent.length < 200) {
+        const allDivs = document.querySelectorAll('div[dir="auto"], span[dir="auto"], div[data-text="true"]');
+        const textBlocks = Array.from(allDivs)
+          .map(el => el.innerText.trim())
+          .filter(t => t.length > 20); // only meaningful text blocks
+        if (textBlocks.join('\n\n').length > bestContent.length) {
+          bestContent = textBlocks.join('\n\n');
+        }
+      }
+
+      return { title, content: bestContent };
     });
+
+    // Take a screenshot for debugging (saved in media dir)
+    try {
+      await page.screenshot({ path: 'article_debug.png', fullPage: true });
+      console.log('  Saved debug screenshot: article_debug.png');
+    } catch (_) {}
 
     await browser.close();
 
-    // Clean up title
     let title = result.title.replace(/ \/ X$/, '').replace(/ on X$/, '').trim();
 
-    // Validate we got meaningful content (not just error pages)
-    if (result.content && result.content.length > 100 &&
-        !result.content.includes('JavaScript is not available')) {
-      console.log(`  Extracted article content: ${result.content.length} chars`);
-      return { title, content: result.content };
+    // Clean up the content: remove common X UI text
+    let content = result.content || '';
+    // Remove lines that are clearly UI elements
+    const uiPatterns = [
+      /^Sign up$/m, /^Log in$/m, /^Post$/m, /^Search$/m,
+      /^Relevant people$/m, /^What's happening$/m, /^Show more$/m,
+      /^Terms of Service$/m, /^Privacy Policy$/m, /^Cookie Policy$/m,
+      /^Trending now$/m, /^Who to follow$/m, /^Follow$/m,
+      /^Don't miss what's happening$/m, /^©\s*\d{4}\s*X Corp/m,
+    ];
+    for (const pattern of uiPatterns) {
+      content = content.replace(pattern, '');
+    }
+    // Collapse excessive blank lines
+    content = content.replace(/\n{3,}/g, '\n\n').trim();
+
+    if (content.length > 200 && !content.includes('JavaScript is not available')) {
+      console.log(`  Extracted article content: ${content.length} chars`);
+      return { title, content };
     }
 
-    console.log(`  Article content too short or contained error page`);
+    console.log(`  Article content too short (${content.length} chars) or error page`);
     return { title, content: null };
   } catch (e) {
     console.error(`  Puppeteer article extraction failed: ${e.message}`);

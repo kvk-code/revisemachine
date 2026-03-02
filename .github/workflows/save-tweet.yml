@@ -1,0 +1,186 @@
+name: Save Tweet to Markdown
+
+on:
+  repository_dispatch:
+    types: [save-tweet]
+  workflow_dispatch:
+    inputs:
+      tweet_url:
+        description: 'Tweet URL to save (e.g., https://x.com/user/status/123456789)'
+        required: true
+        type: string
+
+jobs:
+  save-tweet:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Extract Tweet ID and Fetch Tweet
+        id: fetch-tweet
+        env:
+          TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+        run: |
+          # Get tweet URL from either dispatch type
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            TWEET_URL="${{ github.event.client_payload.tweet_url }}"
+          else
+            TWEET_URL="${{ github.event.inputs.tweet_url }}"
+          fi
+          
+          echo "Processing tweet: $TWEET_URL"
+          
+          # Extract tweet ID from URL
+          # Supports: twitter.com/user/status/ID, x.com/user/status/ID
+          TWEET_ID=$(echo "$TWEET_URL" | grep -oP '(?<=status/)\d+')
+          
+          if [ -z "$TWEET_ID" ]; then
+            echo "Error: Could not extract tweet ID from URL"
+            exit 1
+          fi
+          
+          echo "Tweet ID: $TWEET_ID"
+          echo "tweet_id=$TWEET_ID" >> $GITHUB_OUTPUT
+          
+          # Fetch tweet from twitterapi.io
+          RESPONSE=$(curl -s --request GET \
+            --url "https://api.twitterapi.io/twitter/tweets?tweet_ids=$TWEET_ID" \
+            --header "X-API-Key: $TWITTER_API_KEY")
+          
+          # Save response for processing
+          echo "$RESPONSE" > tweet_response.json
+          
+          # Check if successful
+          STATUS=$(echo "$RESPONSE" | jq -r '.status')
+          if [ "$STATUS" != "success" ]; then
+            echo "Error: API request failed"
+            echo "$RESPONSE"
+            exit 1
+          fi
+          
+          echo "Tweet fetched successfully"
+
+      - name: Generate Markdown File
+        id: generate-markdown
+        run: |
+          # Parse tweet data
+          TWEET_DATA=$(cat tweet_response.json)
+          
+          # Extract fields
+          TWEET_ID=$(echo "$TWEET_DATA" | jq -r '.tweets[0].id')
+          TWEET_TEXT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].text')
+          TWEET_URL=$(echo "$TWEET_DATA" | jq -r '.tweets[0].url')
+          CREATED_AT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].createdAt')
+          AUTHOR_NAME=$(echo "$TWEET_DATA" | jq -r '.tweets[0].author.name')
+          AUTHOR_USERNAME=$(echo "$TWEET_DATA" | jq -r '.tweets[0].author.userName')
+          AUTHOR_PROFILE_PIC=$(echo "$TWEET_DATA" | jq -r '.tweets[0].author.profilePicture')
+          LIKE_COUNT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].likeCount')
+          RETWEET_COUNT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].retweetCount')
+          REPLY_COUNT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].replyCount')
+          VIEW_COUNT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].viewCount')
+          
+          # Extract media URLs if present
+          MEDIA_URLS=$(echo "$TWEET_DATA" | jq -r '.tweets[0].entities.urls[]?.expanded_url // empty' 2>/dev/null || echo "")
+          
+          # Create tweets directory if it doesn't exist
+          mkdir -p tweets
+          
+          # Generate filename with date and tweet ID
+          DATE_PREFIX=$(date -d "$CREATED_AT" +"%Y-%m-%d" 2>/dev/null || date +"%Y-%m-%d")
+          FILENAME="tweets/${DATE_PREFIX}-${TWEET_ID}.md"
+          
+          # Generate markdown content
+          cat > "$FILENAME" << 'MARKDOWN_EOF'
+          ---
+          tweet_id: "${TWEET_ID}"
+          author: "${AUTHOR_NAME}"
+          author_username: "@${AUTHOR_USERNAME}"
+          created_at: "${CREATED_AT}"
+          source_url: "${TWEET_URL}"
+          likes: ${LIKE_COUNT}
+          retweets: ${RETWEET_COUNT}
+          replies: ${REPLY_COUNT}
+          views: ${VIEW_COUNT}
+          saved_at: "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          ---
+
+          # Tweet by ${AUTHOR_NAME} (@${AUTHOR_USERNAME})
+
+          ![Profile Picture](${AUTHOR_PROFILE_PIC})
+
+          ## Content
+
+          ${TWEET_TEXT}
+
+          ---
+
+          ## Metadata
+
+          - **Posted**: ${CREATED_AT}
+          - **Likes**: ${LIKE_COUNT}
+          - **Retweets**: ${RETWEET_COUNT}
+          - **Replies**: ${REPLY_COUNT}
+          - **Views**: ${VIEW_COUNT}
+
+          ## Original Tweet
+
+          [View on Twitter](${TWEET_URL})
+          MARKDOWN_EOF
+          
+          # Use envsubst for variable substitution
+          export TWEET_ID TWEET_TEXT TWEET_URL CREATED_AT AUTHOR_NAME AUTHOR_USERNAME AUTHOR_PROFILE_PIC LIKE_COUNT RETWEET_COUNT REPLY_COUNT VIEW_COUNT
+          
+          cat > "$FILENAME" << EOF
+          ---
+          tweet_id: "$TWEET_ID"
+          author: "$AUTHOR_NAME"
+          author_username: "@$AUTHOR_USERNAME"
+          created_at: "$CREATED_AT"
+          source_url: "$TWEET_URL"
+          likes: $LIKE_COUNT
+          retweets: $RETWEET_COUNT
+          replies: $REPLY_COUNT
+          views: $VIEW_COUNT
+          saved_at: "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          ---
+
+          # Tweet by $AUTHOR_NAME (@$AUTHOR_USERNAME)
+
+          ![Profile Picture]($AUTHOR_PROFILE_PIC)
+
+          ## Content
+
+          $TWEET_TEXT
+
+          ---
+
+          ## Metadata
+
+          - **Posted**: $CREATED_AT
+          - **Likes**: $LIKE_COUNT
+          - **Retweets**: $RETWEET_COUNT
+          - **Replies**: $REPLY_COUNT
+          - **Views**: $VIEW_COUNT
+
+          ## Original Tweet
+
+          [View on Twitter]($TWEET_URL)
+          EOF
+          
+          echo "Generated: $FILENAME"
+          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
+
+      - name: Commit and Push
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add tweets/
+          git commit -m "Save tweet ${{ steps.fetch-tweet.outputs.tweet_id }}" || echo "No changes to commit"
+          git push

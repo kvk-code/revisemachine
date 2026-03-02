@@ -7,7 +7,10 @@ A fully decentralized, self-hosted solution to save tweets as markdown files in 
 - **🔒 Privacy First**: All credentials stored locally in your browser - never sent to any server
 - **🌐 IPFS Ready**: Static frontend can be hosted on IPFS for censorship resistance
 - **📝 Markdown Output**: Tweets saved as clean markdown with full metadata
-- **🤖 GitHub Actions**: Processing happens in your own GitHub repository
+- **� Thread Support**: Automatically detects and archives all tweets in a thread by the same author
+- **📰 Article Support**: Extracts full content from X/Twitter articles (not just the link)
+- **🎬 Media Downloads**: Downloads images, videos, and thumbnails to your repository
+- **� GitHub Actions**: Processing happens in your own GitHub repository
 - **💰 Cost Effective**: Uses twitterapi.io (~$0.15 per 1000 tweets)
 
 ## 🚀 Quick Start
@@ -77,9 +80,24 @@ getit/
 │       └── save-tweet.yml    # GitHub Action that fetches and saves tweets
 ├── frontend/
 │   └── index.html            # Static frontend (IPFS-ready)
+├── scripts/
+│   └── process_tweet.js      # Tweet processing logic (threads, articles, media)
 ├── tweets/                   # Your saved tweets will appear here
+│   └── media/                # Downloaded images and videos
 └── README.md
 ```
+
+## 🎯 Supported Tweet Types
+
+Just paste any X/Twitter URL — the system automatically detects and handles:
+
+| Type | Detection | What Gets Saved |
+|------|-----------|-----------------|
+| **Simple Tweet** | Default | Tweet text, media (images/videos), profile pic, engagement stats |
+| **Thread** | Author has self-replies | All tweets by the author in chronological order |
+| **Article** | Tweet links to `x.com/i/article/` | Full article content (title, body, cover image) via API |
+
+> **No manual selection needed!** The backend automatically determines the tweet type and archives accordingly.
 
 ## 🔧 How It Works
 
@@ -153,41 +171,71 @@ You can also trigger the workflow directly from GitHub:
 
 When you save a tweet, it creates a file like `tweets/2024-01-15-1234567890.md`:
 
+### Simple Tweet with Media
 ```markdown
 ---
 tweet_id: "1234567890"
+type: "tweet"
 author: "John Doe"
 author_username: "@johndoe"
 created_at: "2024-01-15T10:30:00Z"
-source_url: "https://twitter.com/johndoe/status/1234567890"
+source_url: "https://x.com/johndoe/status/1234567890"
 likes: 42
 retweets: 10
-replies: 5
-views: 1000
-saved_at: "2024-01-15T12:00:00Z"
+is_thread: false
+media_count: 1
 ---
 
-# Tweet by John Doe (@johndoe)
+<img src="media/1234567890/profile.jpg" alt="@johndoe" width="48" height="48"> **John Doe** · [@johndoe](https://x.com/johndoe)
 
-![Profile Picture](https://pbs.twimg.com/profile_images/...)
-
-## Content
+# Tweet by @johndoe
 
 This is the tweet content with all the text preserved!
 
+![Image](media/1234567890/img_1.jpg)
+
+## Engagement
+| Metric | Count |
+|--------|-------|
+| Likes | 42 |
+| Retweets | 10 |
+```
+
+### Thread (Multiple Tweets)
+```markdown
+---
+type: "thread"
+is_thread: true
+thread_count: 3
 ---
 
-## Metadata
+# Thread by @johndoe (3 tweets)
 
-- **Posted**: 2024-01-15T10:30:00Z
-- **Likes**: 42
-- **Retweets**: 10
-- **Replies**: 5
-- **Views**: 1000
+### Tweet 1 of 3
+First tweet in the thread...
 
-## Original Tweet
+### Tweet 2 of 3
+Second tweet continues the story...
 
-[View on Twitter](https://twitter.com/johndoe/status/1234567890)
+### Tweet 3 of 3
+Final tweet wraps it up!
+```
+
+### Article
+```markdown
+---
+type: "article"
+---
+
+## Article Content
+
+**Article URL**: [http://x.com/i/article/...](...)
+
+![Cover](https://pbs.twimg.com/...)
+
+### Article Title Here
+
+Full article text extracted automatically...
 ```
 
 ## 🤝 Contributing

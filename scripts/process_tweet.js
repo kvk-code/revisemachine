@@ -62,8 +62,8 @@ async function fetchTweet(tweetId) {
   return data.tweets[0];
 }
 
-async function fetchThreadContext(tweetId, cursor = null) {
-  let url = `https://api.twitterapi.io/twitter/tweet/thread_context?tweetId=${tweetId}`;
+async function advancedSearch(query, cursor = null) {
+  let url = `https://api.twitterapi.io/twitter/tweet/advanced_search?query=${encodeURIComponent(query)}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
   const res = await httpGet(url, { 'X-API-Key': API_KEY });
   return JSON.parse(res.body);
@@ -199,12 +199,12 @@ async function downloadProfilePic(tweet, mediaDir) {
 
 async function fetchThreadTweets(tweet) {
   const authorUsername = tweet.author.userName;
-  const tweetId = tweet.id;
+  const conversationId = tweet.conversationId || tweet.id;
   const allThreadTweets = [];
 
-  // Use the Thread Context API - it returns the full conversation chain
-  // (parent tweets + target tweet + direct replies) for any tweet in the thread
-  console.log(`  Using Thread Context API for tweet ${tweetId}...`);
+  // Use Advanced Search: "from:author conversation_id:id" finds all author tweets in the thread
+  const query = `from:${authorUsername} conversation_id:${conversationId}`;
+  console.log(`  Searching thread with: ${query}`);
   let cursor = null;
   let pages = 0;
   const maxPages = 10;
@@ -212,20 +212,18 @@ async function fetchThreadTweets(tweet) {
   do {
     try {
       await sleep(5500); // rate limit
-      const data = await fetchThreadContext(tweetId, cursor);
-      const replies = data.tweets || data.replies || [];
+      const data = await advancedSearch(query, cursor);
+      const tweets = data.tweets || [];
 
-      for (const reply of replies) {
-        if (reply.author && reply.author.userName === authorUsername) {
-          allThreadTweets.push(reply);
-        }
+      for (const tw of tweets) {
+        allThreadTweets.push(tw);
       }
 
       cursor = data.has_next_page ? data.next_cursor : null;
       pages++;
-      console.log(`  Page ${pages}: ${replies.length} tweets in context, ${allThreadTweets.length} from @${authorUsername}`);
+      console.log(`  Page ${pages}: ${tweets.length} tweets found, ${allThreadTweets.length} total from @${authorUsername}`);
     } catch (e) {
-      console.error(`  Error fetching thread context: ${e.message}`);
+      console.error(`  Error searching thread: ${e.message}`);
       break;
     }
   } while (cursor && pages < maxPages);

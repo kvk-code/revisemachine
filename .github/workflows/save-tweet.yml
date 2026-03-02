@@ -26,7 +26,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Extract Tweet ID and Fetch Tweet
+      - name: Fetch Tweet and Generate Archive
         id: fetch-tweet
         env:
           TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
@@ -41,7 +41,6 @@ jobs:
           echo "Processing tweet: $TWEET_URL"
           
           # Extract tweet ID from URL
-          # Supports: twitter.com/user/status/ID, x.com/user/status/ID
           TWEET_ID=$(echo "$TWEET_URL" | grep -oP '(?<=status/)\d+')
           
           if [ -z "$TWEET_ID" ]; then
@@ -57,133 +56,300 @@ jobs:
             --url "https://api.twitterapi.io/twitter/tweets?tweet_ids=$TWEET_ID" \
             --header "X-API-Key: $TWITTER_API_KEY")
           
-          # Save response for processing
           echo "$RESPONSE" > tweet_response.json
           
           # Check if successful
           STATUS=$(echo "$RESPONSE" | jq -r '.status')
           if [ "$STATUS" != "success" ]; then
             echo "Error: API request failed"
-            echo "$RESPONSE"
+            cat tweet_response.json
             exit 1
           fi
           
           echo "Tweet fetched successfully"
-
-      - name: Generate Markdown File
-        id: generate-markdown
-        run: |
-          # Parse tweet data
+          
+          # Extract basic tweet info
           TWEET_DATA=$(cat tweet_response.json)
-          
-          # Extract fields
-          TWEET_ID=$(echo "$TWEET_DATA" | jq -r '.tweets[0].id')
-          TWEET_TEXT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].text')
-          TWEET_URL=$(echo "$TWEET_DATA" | jq -r '.tweets[0].url')
-          CREATED_AT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].createdAt')
-          AUTHOR_NAME=$(echo "$TWEET_DATA" | jq -r '.tweets[0].author.name')
           AUTHOR_USERNAME=$(echo "$TWEET_DATA" | jq -r '.tweets[0].author.userName')
-          AUTHOR_PROFILE_PIC=$(echo "$TWEET_DATA" | jq -r '.tweets[0].author.profilePicture')
-          LIKE_COUNT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].likeCount')
-          RETWEET_COUNT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].retweetCount')
-          REPLY_COUNT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].replyCount')
-          VIEW_COUNT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].viewCount')
+          CONVERSATION_ID=$(echo "$TWEET_DATA" | jq -r '.tweets[0].conversationId')
+          IN_REPLY_TO_ID=$(echo "$TWEET_DATA" | jq -r '.tweets[0].inReplyToId')
           
-          # Extract media URLs if present
-          MEDIA_URLS=$(echo "$TWEET_DATA" | jq -r '.tweets[0].entities.urls[]?.expanded_url // empty' 2>/dev/null || echo "")
+          # Check if this is part of a thread (same author replying to themselves)
+          IS_THREAD="false"
+          THREAD_TWEETS="[]"
           
-          # Create tweets directory if it doesn't exist
+          if [ "$CONVERSATION_ID" != "null" ] && [ "$CONVERSATION_ID" != "$TWEET_ID" ]; then
+            echo "Checking for thread (conversation: $CONVERSATION_ID)..."
+            
+            # Fetch the conversation/thread
+            THREAD_RESPONSE=$(curl -s --request GET \
+              --url "https://api.twitterapi.io/twitter/tweet/replies?tweetId=$CONVERSATION_ID" \
+              --header "X-API-Key: $TWITTER_API_KEY")
+            
+            echo "$THREAD_RESPONSE" > thread_response.json
+            
+            # Filter for tweets by the same author (thread tweets)
+            THREAD_TWEETS=$(echo "$THREAD_RESPONSE" | jq --arg author "$AUTHOR_USERNAME" \
+              '[.replies[]? | select(.author.userName == $author)]')
+            
+            THREAD_COUNT=$(echo "$THREAD_TWEETS" | jq 'length')
+            if [ "$THREAD_COUNT" -gt 0 ]; then
+              IS_THREAD="true"
+              echo "Found thread with $THREAD_COUNT additional tweets"
+            fi
+          fi
+          
+          # Create directories
           mkdir -p tweets
+          mkdir -p "tweets/media"
           
-          # Generate filename with date and tweet ID
+          # Generate date prefix for filename
+          CREATED_AT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].createdAt')
           DATE_PREFIX=$(date -d "$CREATED_AT" +"%Y-%m-%d" 2>/dev/null || date +"%Y-%m-%d")
-          FILENAME="tweets/${DATE_PREFIX}-${TWEET_ID}.md"
           
-          # Generate markdown content
-          cat > "$FILENAME" << 'MARKDOWN_EOF'
-          ---
-          tweet_id: "${TWEET_ID}"
-          author: "${AUTHOR_NAME}"
-          author_username: "@${AUTHOR_USERNAME}"
-          created_at: "${CREATED_AT}"
-          source_url: "${TWEET_URL}"
-          likes: ${LIKE_COUNT}
-          retweets: ${RETWEET_COUNT}
-          replies: ${REPLY_COUNT}
-          views: ${VIEW_COUNT}
-          saved_at: "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          ---
-
-          # Tweet by ${AUTHOR_NAME} (@${AUTHOR_USERNAME})
-
-          ![Profile Picture](${AUTHOR_PROFILE_PIC})
-
-          ## Content
-
-          ${TWEET_TEXT}
-
-          ---
-
-          ## Metadata
-
-          - **Posted**: ${CREATED_AT}
-          - **Likes**: ${LIKE_COUNT}
-          - **Retweets**: ${RETWEET_COUNT}
-          - **Replies**: ${REPLY_COUNT}
-          - **Views**: ${VIEW_COUNT}
-
-          ## Original Tweet
-
-          [View on Twitter](${TWEET_URL})
-          MARKDOWN_EOF
+          # Create a Node.js script for processing
+          cat > process_tweet.js << 'NODEJS_SCRIPT'
+          const fs = require('fs');
+          const https = require('https');
+          const http = require('http');
+          const path = require('path');
           
-          # Use envsubst for variable substitution
-          export TWEET_ID TWEET_TEXT TWEET_URL CREATED_AT AUTHOR_NAME AUTHOR_USERNAME AUTHOR_PROFILE_PIC LIKE_COUNT RETWEET_COUNT REPLY_COUNT VIEW_COUNT
+          const tweetData = JSON.parse(fs.readFileSync('tweet_response.json', 'utf8'));
+          const tweet = tweetData.tweets[0];
           
-          cat > "$FILENAME" << EOF
-          ---
-          tweet_id: "$TWEET_ID"
-          author: "$AUTHOR_NAME"
-          author_username: "@$AUTHOR_USERNAME"
-          created_at: "$CREATED_AT"
-          source_url: "$TWEET_URL"
-          likes: $LIKE_COUNT
-          retweets: $RETWEET_COUNT
-          replies: $REPLY_COUNT
-          views: $VIEW_COUNT
-          saved_at: "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          ---
-
-          # Tweet by $AUTHOR_NAME (@$AUTHOR_USERNAME)
-
-          ![Profile Picture]($AUTHOR_PROFILE_PIC)
-
-          ## Content
-
-          $TWEET_TEXT
-
-          ---
-
-          ## Metadata
-
-          - **Posted**: $CREATED_AT
-          - **Likes**: $LIKE_COUNT
-          - **Retweets**: $RETWEET_COUNT
-          - **Replies**: $REPLY_COUNT
-          - **Views**: $VIEW_COUNT
-
-          ## Original Tweet
-
-          [View on Twitter]($TWEET_URL)
-          EOF
+          // Helper to download file
+          async function downloadFile(url, filepath) {
+            return new Promise((resolve, reject) => {
+              const file = fs.createWriteStream(filepath);
+              const protocol = url.startsWith('https') ? https : http;
+              
+              protocol.get(url, (response) => {
+                if (response.statusCode === 301 || response.statusCode === 302) {
+                  downloadFile(response.headers.location, filepath).then(resolve).catch(reject);
+                  return;
+                }
+                response.pipe(file);
+                file.on('finish', () => {
+                  file.close();
+                  resolve(filepath);
+                });
+              }).on('error', (err) => {
+                fs.unlink(filepath, () => {});
+                reject(err);
+              });
+            });
+          }
           
-          echo "Generated: $FILENAME"
-          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
+          // Helper to expand t.co URLs in text
+          function expandUrls(text, entities) {
+            if (!entities || !entities.urls) return text;
+            let expandedText = text;
+            for (const urlEntity of entities.urls) {
+              if (urlEntity.url && urlEntity.expanded_url) {
+                expandedText = expandedText.replace(urlEntity.url, urlEntity.expanded_url);
+              }
+            }
+            return expandedText;
+          }
+          
+          // Helper to format hashtags as links
+          function formatHashtags(text, entities) {
+            if (!entities || !entities.hashtags) return text;
+            let formattedText = text;
+            for (const hashtag of entities.hashtags) {
+              const tag = hashtag.text;
+              formattedText = formattedText.replace(
+                new RegExp(`#${tag}\\b`, 'g'),
+                `[#${tag}](https://twitter.com/hashtag/${tag})`
+              );
+            }
+            return formattedText;
+          }
+          
+          // Helper to format mentions as links
+          function formatMentions(text, entities) {
+            if (!entities || !entities.user_mentions) return text;
+            let formattedText = text;
+            for (const mention of entities.user_mentions) {
+              const username = mention.screen_name;
+              formattedText = formattedText.replace(
+                new RegExp(`@${username}\\b`, 'gi'),
+                `[@${username}](https://twitter.com/${username})`
+              );
+            }
+            return formattedText;
+          }
+          
+          async function processTweet() {
+            const tweetId = tweet.id;
+            const datePrefix = process.argv[2] || new Date().toISOString().split('T')[0];
+            const mediaDir = `tweets/media/${tweetId}`;
+            
+            // Create media directory for this tweet
+            if (!fs.existsSync(mediaDir)) {
+              fs.mkdirSync(mediaDir, { recursive: true });
+            }
+            
+            // Process text - expand URLs, format hashtags and mentions
+            let processedText = tweet.text || '';
+            processedText = expandUrls(processedText, tweet.entities);
+            processedText = formatHashtags(processedText, tweet.entities);
+            processedText = formatMentions(processedText, tweet.entities);
+            
+            // Download media
+            const mediaFiles = [];
+            const extendedEntities = tweet.extendedEntities || {};
+            const mediaItems = extendedEntities.media || [];
+            
+            for (let i = 0; i < mediaItems.length; i++) {
+              const media = mediaItems[i];
+              const mediaType = media.type;
+              
+              try {
+                if (mediaType === 'photo') {
+                  const imageUrl = media.media_url_https || media.media_url;
+                  if (imageUrl) {
+                    const ext = path.extname(imageUrl.split('?')[0]) || '.jpg';
+                    const filename = `image_${i + 1}${ext}`;
+                    const filepath = `${mediaDir}/${filename}`;
+                    await downloadFile(imageUrl, filepath);
+                    mediaFiles.push({ type: 'image', path: filepath, alt: `Image ${i + 1}` });
+                    console.log(`Downloaded: ${filepath}`);
+                  }
+                } else if (mediaType === 'video' || mediaType === 'animated_gif') {
+                  const videoInfo = media.video_info;
+                  if (videoInfo && videoInfo.variants) {
+                    // Get highest quality MP4
+                    const mp4Variants = videoInfo.variants
+                      .filter(v => v.content_type === 'video/mp4')
+                      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+                    
+                    if (mp4Variants.length > 0) {
+                      const videoUrl = mp4Variants[0].url;
+                      const filename = `video_${i + 1}.mp4`;
+                      const filepath = `${mediaDir}/${filename}`;
+                      await downloadFile(videoUrl, filepath);
+                      mediaFiles.push({ type: 'video', path: filepath, alt: `Video ${i + 1}` });
+                      console.log(`Downloaded: ${filepath}`);
+                    }
+                  }
+                }
+              } catch (err) {
+                console.error(`Failed to download media: ${err.message}`);
+                // Fall back to direct URL
+                if (media.media_url_https) {
+                  mediaFiles.push({ type: 'image', path: media.media_url_https, alt: `Image ${i + 1}`, external: true });
+                }
+              }
+            }
+            
+            // Download author profile picture
+            let profilePicPath = tweet.author.profilePicture;
+            try {
+              if (tweet.author.profilePicture) {
+                const profileUrl = tweet.author.profilePicture.replace('_normal', '_400x400');
+                const profileFilename = `${mediaDir}/profile.jpg`;
+                await downloadFile(profileUrl, profileFilename);
+                profilePicPath = profileFilename;
+                console.log(`Downloaded profile pic: ${profileFilename}`);
+              }
+            } catch (err) {
+              console.error(`Failed to download profile pic: ${err.message}`);
+            }
+            
+            // Generate markdown
+            const filename = `tweets/${datePrefix}-${tweetId}.md`;
+            
+            let markdown = `---
+tweet_id: "${tweet.id}"
+author: "${tweet.author.name}"
+author_username: "@${tweet.author.userName}"
+created_at: "${tweet.createdAt}"
+source_url: "${tweet.url}"
+likes: ${tweet.likeCount || 0}
+retweets: ${tweet.retweetCount || 0}
+replies: ${tweet.replyCount || 0}
+views: ${tweet.viewCount || 0}
+bookmarks: ${tweet.bookmarkCount || 0}
+quotes: ${tweet.quoteCount || 0}
+is_thread: false
+media_count: ${mediaFiles.length}
+saved_at: "${new Date().toISOString()}"
+---
+
+# Tweet by ${tweet.author.name} (@${tweet.author.userName})
+
+<img src="${profilePicPath}" alt="Profile Picture" width="48" height="48" style="border-radius: 50%;">
+
+**[@${tweet.author.userName}](https://twitter.com/${tweet.author.userName})** · ${tweet.createdAt}
+
+---
+
+## Content
+
+${processedText}
+
+`;
+            
+            // Add media section
+            if (mediaFiles.length > 0) {
+              markdown += `\n## Media\n\n`;
+              for (const media of mediaFiles) {
+                if (media.type === 'image') {
+                  markdown += `![${media.alt}](${media.path})\n\n`;
+                } else if (media.type === 'video') {
+                  markdown += `🎬 **Video**: [${media.alt}](${media.path})\n\n`;
+                }
+              }
+            }
+            
+            // Add quoted tweet if present
+            if (tweet.quoted_tweet) {
+              markdown += `\n## Quoted Tweet\n\n`;
+              markdown += `> **@${tweet.quoted_tweet.author?.userName || 'unknown'}**: ${tweet.quoted_tweet.text || ''}\n`;
+              markdown += `> [View quoted tweet](${tweet.quoted_tweet.url || ''})\n\n`;
+            }
+            
+            // Add metadata
+            markdown += `---
+
+## Engagement
+
+| Metric | Count |
+|--------|-------|
+| ❤️ Likes | ${tweet.likeCount || 0} |
+| 🔁 Retweets | ${tweet.retweetCount || 0} |
+| 💬 Replies | ${tweet.replyCount || 0} |
+| 👁️ Views | ${tweet.viewCount || 0} |
+| 🔖 Bookmarks | ${tweet.bookmarkCount || 0} |
+| 💭 Quotes | ${tweet.quoteCount || 0} |
+
+## Source
+
+- **Original Tweet**: [View on Twitter](${tweet.url})
+- **Archived**: ${new Date().toISOString()}
+`;
+            
+            fs.writeFileSync(filename, markdown);
+            console.log(`Generated: ${filename}`);
+            
+            // Output for GitHub Actions
+            fs.appendFileSync(process.env.GITHUB_OUTPUT || '/dev/null', `filename=${filename}\n`);
+          }
+          
+          processTweet().catch(err => {
+            console.error('Error:', err);
+            process.exit(1);
+          });
+          NODEJS_SCRIPT
+          
+          # Run the Node.js script
+          node process_tweet.js "$DATE_PREFIX"
 
       - name: Commit and Push
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add tweets/
-          git commit -m "Save tweet ${{ steps.fetch-tweet.outputs.tweet_id }}" || echo "No changes to commit"
+          git commit -m "Archive tweet ${{ steps.fetch-tweet.outputs.tweet_id }}" || echo "No changes to commit"
           git push

@@ -62,8 +62,8 @@ async function fetchTweet(tweetId) {
   return data.tweets[0];
 }
 
-async function fetchReplies(tweetId, cursor = null) {
-  let url = `https://api.twitterapi.io/twitter/tweet/replies?tweetId=${tweetId}`;
+async function fetchThreadContext(tweetId, cursor = null) {
+  let url = `https://api.twitterapi.io/twitter/tweet/thread_context?tweetId=${tweetId}`;
   if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
   const res = await httpGet(url, { 'X-API-Key': API_KEY });
   return JSON.parse(res.body);
@@ -199,55 +199,39 @@ async function downloadProfilePic(tweet, mediaDir) {
 
 async function fetchThreadTweets(tweet) {
   const authorUsername = tweet.author.userName;
-  const conversationId = tweet.conversationId || tweet.id;
   const tweetId = tweet.id;
-  const authorTweets = [];
+  const allThreadTweets = [];
 
-  // If this tweet IS the conversation root, fetch replies and filter for author
-  // If this tweet is NOT the root, fetch the root first, then replies
-  let rootTweet = tweet;
-  if (conversationId && conversationId !== tweetId) {
-    console.log(`  Fetching conversation root: ${conversationId}`);
-    try {
-      await sleep(5500); // rate limit
-      rootTweet = await fetchTweet(conversationId);
-      if (rootTweet.author.userName === authorUsername) {
-        authorTweets.push(rootTweet);
-      }
-    } catch (e) {
-      console.error(`  Could not fetch root tweet: ${e.message}`);
-    }
-  }
-
-  // Fetch replies (paginated) and filter for same-author tweets
-  console.log(`  Fetching replies for conversation ${conversationId}...`);
+  // Use the Thread Context API - it returns the full conversation chain
+  // (parent tweets + target tweet + direct replies) for any tweet in the thread
+  console.log(`  Using Thread Context API for tweet ${tweetId}...`);
   let cursor = null;
   let pages = 0;
-  const maxPages = 5; // limit pagination
+  const maxPages = 10;
 
   do {
     try {
       await sleep(5500); // rate limit
-      const data = await fetchReplies(conversationId, cursor);
-      const replies = data.tweets || data.replies || [];
-      
+      const data = await fetchThreadContext(tweetId, cursor);
+      const replies = data.replies || [];
+
       for (const reply of replies) {
         if (reply.author && reply.author.userName === authorUsername) {
-          authorTweets.push(reply);
+          allThreadTweets.push(reply);
         }
       }
 
       cursor = data.has_next_page ? data.next_cursor : null;
       pages++;
-      console.log(`  Page ${pages}: ${replies.length} replies, ${authorTweets.length} from author so far`);
+      console.log(`  Page ${pages}: ${replies.length} tweets in context, ${allThreadTweets.length} from @${authorUsername}`);
     } catch (e) {
-      console.error(`  Error fetching replies page: ${e.message}`);
+      console.error(`  Error fetching thread context: ${e.message}`);
       break;
     }
   } while (cursor && pages < maxPages);
 
   // Sort by ID (chronological)
-  authorTweets.sort((a, b) => {
+  allThreadTweets.sort((a, b) => {
     if (a.id < b.id) return -1;
     if (a.id > b.id) return 1;
     return 0;
@@ -255,7 +239,7 @@ async function fetchThreadTweets(tweet) {
 
   // Deduplicate
   const seen = new Set();
-  return authorTweets.filter(t => {
+  return allThreadTweets.filter(t => {
     if (seen.has(t.id)) return false;
     seen.add(t.id);
     return true;
@@ -264,25 +248,33 @@ async function fetchThreadTweets(tweet) {
 
 // ─── Markdown Generation ────────────────────────────────────────────────────
 
+// Media is stored at tweets/media/... on disk, but the markdown file lives
+// inside tweets/, so relative references must strip the tweets/ prefix.
+function mdRelativePath(fsPath) {
+  if (!fsPath) return fsPath;
+  if (fsPath.startsWith('tweets/')) return fsPath.substring('tweets/'.length);
+  return fsPath;
+}
+
 function renderMediaMarkdown(mediaFiles) {
   if (!mediaFiles.length) return '';
   let md = '\n### Media\n\n';
   for (const m of mediaFiles) {
-    const src = m.localPath || m.originalUrl;
+    const src = m.localPath ? mdRelativePath(m.localPath) : m.originalUrl;
     if (m.type === 'photo') {
       md += `![Image](${src})\n\n`;
     } else if (m.type === 'video') {
       if (m.thumbPath) {
-        md += `[![Video Thumbnail](${m.thumbPath})](${src})\n\n`;
+        md += `[![Video Thumbnail](${mdRelativePath(m.thumbPath)})](${src})\n\n`;
       }
       if (m.localPath) {
-        md += `**Video**: [Download](${m.localPath})\n\n`;
+        md += `**Video**: [Download](${src})\n\n`;
       } else {
         md += `**Video**: [Watch on Twitter](${m.originalUrl})\n\n`;
       }
     } else if (m.type === 'animated_gif') {
       if (m.localPath) {
-        md += `**GIF**: [View](${m.localPath})\n\n`;
+        md += `**GIF**: [View](${src})\n\n`;
       } else {
         md += `**GIF**: [View on Twitter](${m.originalUrl})\n\n`;
       }
@@ -316,10 +308,80 @@ function detectArticleUrl(tweet) {
 }
 
 async function fetchArticleContent(articleUrl) {
-  // X/Twitter articles are JavaScript-rendered SPAs. Server-side fetching
-  // cannot extract their content. We note this clearly in the markdown.
-  console.log(`  Note: X articles require JavaScript rendering - content extraction not possible via server-side fetch`);
-  return { title: '', content: null };
+  let browser;
+  try {
+    console.log(`  Launching headless browser for article: ${articleUrl}`);
+    const puppeteer = require('puppeteer');
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+
+    // Navigate and wait for the article content to render
+    await page.goto(articleUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+
+    // Wait a bit more for dynamic content
+    await sleep(3000);
+
+    // Extract article content
+    const result = await page.evaluate(() => {
+      // Try to find the article element
+      const articleEl = document.querySelector('article') ||
+                        document.querySelector('[data-testid="tweetText"]') ||
+                        document.querySelector('[role="article"]') ||
+                        document.querySelector('main');
+
+      const title = document.title || '';
+      let content = '';
+
+      if (articleEl) {
+        // Get all text content, preserving paragraph structure
+        const paragraphs = articleEl.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote');
+        if (paragraphs.length > 0) {
+          content = Array.from(paragraphs).map(p => {
+            const tag = p.tagName.toLowerCase();
+            const text = p.innerText.trim();
+            if (!text) return '';
+            if (tag.startsWith('h')) {
+              const level = parseInt(tag[1]);
+              return '#'.repeat(level) + ' ' + text;
+            }
+            if (tag === 'blockquote') return '> ' + text;
+            if (tag === 'li') return '- ' + text;
+            return text;
+          }).filter(Boolean).join('\n\n');
+        } else {
+          content = articleEl.innerText;
+        }
+      } else {
+        // Fallback: grab all visible text from body
+        content = document.body.innerText;
+      }
+
+      return { title, content };
+    });
+
+    await browser.close();
+
+    // Clean up title
+    let title = result.title.replace(/ \/ X$/, '').replace(/ on X$/, '').trim();
+
+    // Validate we got meaningful content (not just error pages)
+    if (result.content && result.content.length > 100 &&
+        !result.content.includes('JavaScript is not available')) {
+      console.log(`  Extracted article content: ${result.content.length} chars`);
+      return { title, content: result.content };
+    }
+
+    console.log(`  Article content too short or contained error page`);
+    return { title, content: null };
+  } catch (e) {
+    console.error(`  Puppeteer article extraction failed: ${e.message}`);
+    if (browser) try { await browser.close(); } catch (_) {}
+    return { title: '', content: null };
+  }
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -426,7 +488,7 @@ saved_at: "${new Date().toISOString()}"
 
   // Author header
   const authorLine = profilePicPath
-    ? `<img src="${profilePicPath}" alt="@${tweet.author.userName}" width="48" height="48" style="border-radius:50%;vertical-align:middle;"> `
+    ? `<img src="${mdRelativePath(profilePicPath)}" alt="@${tweet.author.userName}" width="48" height="48" style="border-radius:50%;vertical-align:middle;"> `
     : '';
   md += `${authorLine}**${tweet.author.name}** · [@${tweet.author.userName}](https://x.com/${tweet.author.userName})\n\n`;
   md += `${tweet.createdAt}\n\n`;
@@ -448,11 +510,17 @@ saved_at: "${new Date().toISOString()}"
     if (i < tweetDataList.length - 1) md += '---\n\n';
   }
 
-  // If article, add article link section
+  // If article, fetch and embed article content
   if (isArticle) {
-    md += `---\n\n## Article\n\n`;
-    md += `**Read the full article**: [${articleUrl}](${articleUrl})\n\n`;
-    md += `> *X/Twitter articles are JavaScript-rendered and cannot be archived server-side. Visit the link above to read the full article.*\n\n`;
+    md += `---\n\n## Article Content\n\n`;
+    md += `**Article URL**: [${articleUrl}](${articleUrl})\n\n`;
+    const { title, content } = await fetchArticleContent(articleUrl);
+    if (title) md += `### ${title}\n\n`;
+    if (content) {
+      md += content + '\n\n';
+    } else {
+      md += `> *Article content could not be extracted. Visit the link above to read the full article.*\n\n`;
+    }
   }
 
   // Quoted tweet

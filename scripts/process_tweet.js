@@ -3,23 +3,40 @@ const https = require('https');
 const http = require('http');
 const path = require('path');
 
-// Helper to download file
+const API_KEY = process.env.TWITTER_API_KEY;
+const TWEET_URL = process.env.TWEET_URL;
+
+// ─── HTTP Helpers ───────────────────────────────────────────────────────────
+
+function httpGet(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith('https') ? https : http;
+    const req = protocol.get(url, { headers }, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        return httpGet(res.headers.location, headers).then(resolve).catch(reject);
+      }
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve({ statusCode: res.statusCode, body: data }));
+    });
+    req.on('error', reject);
+    req.setTimeout(30000, () => { req.destroy(); reject(new Error('Request timeout')); });
+  });
+}
+
 async function downloadFile(url, filepath) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(filepath);
     const protocol = url.startsWith('https') ? https : http;
-    
-    protocol.get(url, (response) => {
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        file.close();
-        downloadFile(response.headers.location, filepath).then(resolve).catch(reject);
-        return;
+    protocol.get(url, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        return downloadFile(res.headers.location, filepath).then(resolve).catch(reject);
       }
-      response.pipe(file);
-      file.on('finish', () => {
-        file.close();
-        resolve(filepath);
-      });
+      if (res.statusCode !== 200) {
+        return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+      }
+      const file = fs.createWriteStream(filepath);
+      res.pipe(file);
+      file.on('finish', () => { file.close(); resolve(filepath); });
     }).on('error', (err) => {
       fs.unlink(filepath, () => {});
       reject(err);
@@ -27,131 +44,384 @@ async function downloadFile(url, filepath) {
   });
 }
 
-// Helper to expand t.co URLs in text
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// ─── Twitter API Helpers ────────────────────────────────────────────────────
+
+async function fetchTweet(tweetId) {
+  const res = await httpGet(
+    `https://api.twitterapi.io/twitter/tweets?tweet_ids=${tweetId}`,
+    { 'X-API-Key': API_KEY }
+  );
+  const data = JSON.parse(res.body);
+  if (data.status !== 'success' || !data.tweets || !data.tweets.length) {
+    throw new Error(`Failed to fetch tweet ${tweetId}: ${JSON.stringify(data)}`);
+  }
+  return data.tweets[0];
+}
+
+async function fetchReplies(tweetId, cursor = null) {
+  let url = `https://api.twitterapi.io/twitter/tweet/replies?tweetId=${tweetId}`;
+  if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
+  const res = await httpGet(url, { 'X-API-Key': API_KEY });
+  return JSON.parse(res.body);
+}
+
+// ─── Text Processing ────────────────────────────────────────────────────────
+
 function expandUrls(text, entities) {
   if (!entities || !entities.urls) return text;
-  let expandedText = text;
-  for (const urlEntity of entities.urls) {
-    if (urlEntity.url && urlEntity.expanded_url) {
-      expandedText = expandedText.replace(urlEntity.url, urlEntity.expanded_url);
+  let out = text;
+  for (const u of entities.urls) {
+    if (u.url && u.expanded_url) {
+      out = out.replace(u.url, u.expanded_url);
     }
   }
-  return expandedText;
+  return out;
 }
 
-// Helper to format hashtags as links
 function formatHashtags(text, entities) {
   if (!entities || !entities.hashtags) return text;
-  let formattedText = text;
-  for (const hashtag of entities.hashtags) {
-    const tag = hashtag.text;
-    formattedText = formattedText.replace(
-      new RegExp(`#${tag}\\b`, 'g'),
-      `[#${tag}](https://twitter.com/hashtag/${tag})`
-    );
+  let out = text;
+  for (const h of entities.hashtags) {
+    out = out.replace(new RegExp(`#${h.text}\\b`, 'g'), `[#${h.text}](https://x.com/hashtag/${h.text})`);
   }
-  return formattedText;
+  return out;
 }
 
-// Helper to format mentions as links
 function formatMentions(text, entities) {
   if (!entities || !entities.user_mentions) return text;
-  let formattedText = text;
-  for (const mention of entities.user_mentions) {
-    const username = mention.screen_name;
-    formattedText = formattedText.replace(
-      new RegExp(`@${username}\\b`, 'gi'),
-      `[@${username}](https://twitter.com/${username})`
-    );
+  let out = text;
+  for (const m of entities.user_mentions) {
+    out = out.replace(new RegExp(`@${m.screen_name}\\b`, 'gi'), `[@${m.screen_name}](https://x.com/${m.screen_name})`);
   }
-  return formattedText;
+  return out;
 }
 
-async function processTweet() {
-  const tweetData = JSON.parse(fs.readFileSync('tweet_response.json', 'utf8'));
-  const tweet = tweetData.tweets[0];
-  
-  const tweetId = tweet.id;
-  const datePrefix = process.argv[2] || new Date().toISOString().split('T')[0];
-  const mediaDir = `tweets/media/${tweetId}`;
-  
-  // Create media directory for this tweet
-  if (!fs.existsSync(mediaDir)) {
-    fs.mkdirSync(mediaDir, { recursive: true });
-  }
-  
-  // Process text - expand URLs, format hashtags and mentions
-  let processedText = tweet.text || '';
-  processedText = expandUrls(processedText, tweet.entities);
-  processedText = formatHashtags(processedText, tweet.entities);
-  processedText = formatMentions(processedText, tweet.entities);
-  
-  // Download media
+function processText(text, entities) {
+  let out = text || '';
+  out = expandUrls(out, entities);
+  out = formatHashtags(out, entities);
+  out = formatMentions(out, entities);
+  return out;
+}
+
+// ─── Media Handling ─────────────────────────────────────────────────────────
+
+async function downloadMedia(tweet, mediaDir) {
   const mediaFiles = [];
-  const extendedEntities = tweet.extendedEntities || {};
-  const mediaItems = extendedEntities.media || [];
-  
+  const extEntities = tweet.extendedEntities || {};
+  const mediaItems = extEntities.media || [];
+
   for (let i = 0; i < mediaItems.length; i++) {
     const media = mediaItems[i];
-    const mediaType = media.type;
-    
     try {
-      if (mediaType === 'photo') {
+      if (media.type === 'photo') {
         const imageUrl = media.media_url_https || media.media_url;
         if (imageUrl) {
           const ext = path.extname(imageUrl.split('?')[0]) || '.jpg';
           const filename = `image_${i + 1}${ext}`;
           const filepath = `${mediaDir}/${filename}`;
           await downloadFile(imageUrl, filepath);
-          mediaFiles.push({ type: 'image', path: filepath, alt: `Image ${i + 1}` });
-          console.log(`Downloaded: ${filepath}`);
+          mediaFiles.push({ type: 'photo', localPath: filepath, originalUrl: imageUrl });
+          console.log(`  Downloaded photo: ${filepath}`);
         }
-      } else if (mediaType === 'video' || mediaType === 'animated_gif') {
-        const videoInfo = media.video_info;
-        if (videoInfo && videoInfo.variants) {
-          // Get highest quality MP4
-          const mp4Variants = videoInfo.variants
+      } else if (media.type === 'video' || media.type === 'animated_gif') {
+        const vi = media.video_info;
+        if (vi && vi.variants) {
+          const mp4s = vi.variants
             .filter(v => v.content_type === 'video/mp4')
             .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-          
-          if (mp4Variants.length > 0) {
-            const videoUrl = mp4Variants[0].url;
-            const filename = `video_${i + 1}.mp4`;
+          if (mp4s.length > 0) {
+            const filename = media.type === 'animated_gif' ? `gif_${i + 1}.mp4` : `video_${i + 1}.mp4`;
             const filepath = `${mediaDir}/${filename}`;
-            await downloadFile(videoUrl, filepath);
-            mediaFiles.push({ type: 'video', path: filepath, alt: `Video ${i + 1}` });
-            console.log(`Downloaded: ${filepath}`);
+            try {
+              await downloadFile(mp4s[0].url, filepath);
+              mediaFiles.push({ type: media.type, localPath: filepath, originalUrl: mp4s[0].url });
+              console.log(`  Downloaded ${media.type}: ${filepath}`);
+            } catch (dlErr) {
+              console.error(`  Video download failed, linking instead: ${dlErr.message}`);
+              mediaFiles.push({ type: media.type, localPath: null, originalUrl: mp4s[0].url });
+            }
           }
+        }
+        // Also save the video thumbnail
+        if (media.media_url_https) {
+          const thumbPath = `${mediaDir}/thumb_${i + 1}.jpg`;
+          try {
+            await downloadFile(media.media_url_https, thumbPath);
+            mediaFiles[mediaFiles.length - 1].thumbPath = thumbPath;
+          } catch (e) { /* ignore */ }
         }
       }
     } catch (err) {
-      console.error(`Failed to download media: ${err.message}`);
-      // Fall back to direct URL
-      if (media.media_url_https) {
-        mediaFiles.push({ type: 'image', path: media.media_url_https, alt: `Image ${i + 1}`, external: true });
+      console.error(`  Failed to download media ${i}: ${err.message}`);
+      const fallbackUrl = media.media_url_https || media.media_url || '';
+      if (fallbackUrl) {
+        mediaFiles.push({ type: media.type || 'photo', localPath: null, originalUrl: fallbackUrl });
       }
     }
   }
-  
-  // Download author profile picture
-  let profilePicPath = tweet.author.profilePicture;
+  return mediaFiles;
+}
+
+async function downloadProfilePic(tweet, mediaDir) {
+  if (!tweet.author || !tweet.author.profilePicture) return null;
   try {
-    if (tweet.author.profilePicture) {
-      const profileUrl = tweet.author.profilePicture.replace('_normal', '_400x400');
-      const profileFilename = `${mediaDir}/profile.jpg`;
-      await downloadFile(profileUrl, profileFilename);
-      profilePicPath = profileFilename;
-      console.log(`Downloaded profile pic: ${profileFilename}`);
-    }
-  } catch (err) {
-    console.error(`Failed to download profile pic: ${err.message}`);
+    const url = tweet.author.profilePicture.replace('_normal', '_400x400');
+    const filepath = `${mediaDir}/profile.jpg`;
+    await downloadFile(url, filepath);
+    console.log(`  Downloaded profile pic: ${filepath}`);
+    return filepath;
+  } catch (e) {
+    console.error(`  Profile pic download failed: ${e.message}`);
+    return tweet.author.profilePicture;
   }
-  
-  // Generate markdown
+}
+
+// ─── Thread Detection & Fetching ────────────────────────────────────────────
+
+async function fetchThreadTweets(tweet) {
+  const authorUsername = tweet.author.userName;
+  const conversationId = tweet.conversationId || tweet.id;
+  const tweetId = tweet.id;
+  const authorTweets = [];
+
+  // If this tweet IS the conversation root, fetch replies and filter for author
+  // If this tweet is NOT the root, fetch the root first, then replies
+  let rootTweet = tweet;
+  if (conversationId && conversationId !== tweetId) {
+    console.log(`  Fetching conversation root: ${conversationId}`);
+    try {
+      await sleep(5500); // rate limit
+      rootTweet = await fetchTweet(conversationId);
+      if (rootTweet.author.userName === authorUsername) {
+        authorTweets.push(rootTweet);
+      }
+    } catch (e) {
+      console.error(`  Could not fetch root tweet: ${e.message}`);
+    }
+  }
+
+  // Fetch replies (paginated) and filter for same-author tweets
+  console.log(`  Fetching replies for conversation ${conversationId}...`);
+  let cursor = null;
+  let pages = 0;
+  const maxPages = 5; // limit pagination
+
+  do {
+    try {
+      await sleep(5500); // rate limit
+      const data = await fetchReplies(conversationId, cursor);
+      const replies = data.tweets || data.replies || [];
+      
+      for (const reply of replies) {
+        if (reply.author && reply.author.userName === authorUsername) {
+          authorTweets.push(reply);
+        }
+      }
+
+      cursor = data.has_next_page ? data.next_cursor : null;
+      pages++;
+      console.log(`  Page ${pages}: ${replies.length} replies, ${authorTweets.length} from author so far`);
+    } catch (e) {
+      console.error(`  Error fetching replies page: ${e.message}`);
+      break;
+    }
+  } while (cursor && pages < maxPages);
+
+  // Sort by ID (chronological)
+  authorTweets.sort((a, b) => {
+    if (a.id < b.id) return -1;
+    if (a.id > b.id) return 1;
+    return 0;
+  });
+
+  // Deduplicate
+  const seen = new Set();
+  return authorTweets.filter(t => {
+    if (seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
+}
+
+// ─── Markdown Generation ────────────────────────────────────────────────────
+
+function renderMediaMarkdown(mediaFiles) {
+  if (!mediaFiles.length) return '';
+  let md = '\n### Media\n\n';
+  for (const m of mediaFiles) {
+    const src = m.localPath || m.originalUrl;
+    if (m.type === 'photo') {
+      md += `![Image](${src})\n\n`;
+    } else if (m.type === 'video') {
+      if (m.thumbPath) {
+        md += `[![Video Thumbnail](${m.thumbPath})](${src})\n\n`;
+      }
+      if (m.localPath) {
+        md += `**Video**: [Download](${m.localPath})\n\n`;
+      } else {
+        md += `**Video**: [Watch on Twitter](${m.originalUrl})\n\n`;
+      }
+    } else if (m.type === 'animated_gif') {
+      if (m.localPath) {
+        md += `**GIF**: [View](${m.localPath})\n\n`;
+      } else {
+        md += `**GIF**: [View on Twitter](${m.originalUrl})\n\n`;
+      }
+    }
+  }
+  return md;
+}
+
+function renderSingleTweet(tweet, processedText, mediaFiles, profilePicPath, index, total) {
+  let md = '';
+  if (total > 1) {
+    md += `### Tweet ${index + 1} of ${total}\n\n`;
+  }
+
+  md += processedText + '\n';
+  md += renderMediaMarkdown(mediaFiles);
+  return md;
+}
+
+// ─── Article Handling ───────────────────────────────────────────────────────
+
+function detectArticleUrl(tweet) {
+  const urls = (tweet.entities || {}).urls || [];
+  for (const u of urls) {
+    const expanded = u.expanded_url || '';
+    if (expanded.includes('x.com/i/article/') || expanded.includes('twitter.com/i/article/')) {
+      return expanded;
+    }
+  }
+  return null;
+}
+
+async function fetchArticleContent(articleUrl) {
+  try {
+    console.log(`  Fetching article content from: ${articleUrl}`);
+    const res = await httpGet(articleUrl);
+    const html = res.body;
+    
+    // Extract text content from the HTML (basic extraction)
+    // Remove script and style tags
+    let text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+    text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+    
+    // Extract content from article tags or main content area
+    const articleMatch = text.match(/<article[^>]*>([\s\S]*?)<\/article>/i);
+    if (articleMatch) {
+      text = articleMatch[1];
+    }
+    
+    // Extract title
+    const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].replace(/ \/ X$/, '').replace(/ on X$/, '').trim() : '';
+
+    // Convert remaining HTML to text
+    text = text.replace(/<br\s*\/?>/gi, '\n');
+    text = text.replace(/<\/p>/gi, '\n\n');
+    text = text.replace(/<\/h[1-6]>/gi, '\n\n');
+    text = text.replace(/<[^>]+>/g, '');
+    text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    text = text.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
+    text = text.replace(/\n{3,}/g, '\n\n').trim();
+    
+    return { title, content: text || null };
+  } catch (e) {
+    console.error(`  Failed to fetch article: ${e.message}`);
+    return { title: '', content: null };
+  }
+}
+
+// ─── Main ───────────────────────────────────────────────────────────────────
+
+async function main() {
+  if (!API_KEY) throw new Error('TWITTER_API_KEY environment variable is required');
+  if (!TWEET_URL) throw new Error('TWEET_URL environment variable is required');
+
+  // Extract tweet ID
+  const idMatch = TWEET_URL.match(/status\/(\d+)/);
+  if (!idMatch) throw new Error(`Could not extract tweet ID from: ${TWEET_URL}`);
+  const tweetId = idMatch[1];
+  console.log(`Tweet ID: ${tweetId}`);
+
+  // Fetch the main tweet
+  const tweet = await fetchTweet(tweetId);
+  console.log(`Author: @${tweet.author.userName}`);
+  console.log(`Text: ${(tweet.text || '').substring(0, 80)}...`);
+
+  // Determine tweet type
+  const articleUrl = detectArticleUrl(tweet);
+  const isArticle = !!articleUrl;
+  const conversationId = tweet.conversationId || tweet.id;
+  const isConversationRoot = conversationId === tweet.id;
+
+  // Setup directories
+  const createdDate = tweet.createdAt ? new Date(tweet.createdAt) : new Date();
+  const datePrefix = createdDate.toISOString().split('T')[0];
+  const mediaDir = `tweets/media/${tweetId}`;
+  fs.mkdirSync(mediaDir, { recursive: true });
+  fs.mkdirSync('tweets', { recursive: true });
+
+  // Download profile pic
+  const profilePicPath = await downloadProfilePic(tweet, mediaDir);
+
+  // ── Handle based on type ──
+
+  let allTweets = [tweet];
+  let isThread = false;
+
+  // Check for thread: fetch replies and look for same-author tweets
+  if (isConversationRoot && (tweet.replyCount > 0 || tweet.quoteCount > 0)) {
+    console.log('Checking for thread (same-author replies)...');
+    const threadTweets = await fetchThreadTweets(tweet);
+    // If we found additional tweets from the same author, it's a thread
+    const additional = threadTweets.filter(t => t.id !== tweet.id);
+    if (additional.length > 0) {
+      isThread = true;
+      // Ensure root tweet is first
+      allTweets = [tweet, ...additional];
+      console.log(`Thread detected: ${allTweets.length} tweets from @${tweet.author.userName}`);
+    }
+  } else if (!isConversationRoot) {
+    // This tweet is a reply in a conversation - check if it's part of a thread by the same author
+    console.log('Tweet is part of a conversation, checking for thread...');
+    const threadTweets = await fetchThreadTweets(tweet);
+    if (threadTweets.length > 1) {
+      isThread = true;
+      allTweets = threadTweets;
+      console.log(`Thread detected: ${allTweets.length} tweets from @${tweet.author.userName}`);
+    }
+  }
+
+  // Process each tweet
+  const tweetDataList = [];
+  for (let i = 0; i < allTweets.length; i++) {
+    const tw = allTweets[i];
+    console.log(`\nProcessing tweet ${i + 1}/${allTweets.length}: ${tw.id}`);
+    
+    const twMediaDir = i === 0 ? mediaDir : `tweets/media/${tw.id}`;
+    if (i > 0) fs.mkdirSync(twMediaDir, { recursive: true });
+
+    const processedText = processText(tw.text, tw.entities);
+    const mediaFiles = await downloadMedia(tw, twMediaDir);
+    
+    tweetDataList.push({ tweet: tw, processedText, mediaFiles });
+  }
+
+  // ── Generate Markdown ──
+
   const filename = `tweets/${datePrefix}-${tweetId}.md`;
-  
-  let markdown = `---
+  const totalMedia = tweetDataList.reduce((sum, d) => sum + d.mediaFiles.length, 0);
+
+  let md = `---
 tweet_id: "${tweet.id}"
+type: "${isArticle ? 'article' : isThread ? 'thread' : 'tweet'}"
 author: "${tweet.author.name}"
 author_username: "@${tweet.author.userName}"
 created_at: "${tweet.createdAt}"
@@ -162,74 +432,91 @@ replies: ${tweet.replyCount || 0}
 views: ${tweet.viewCount || 0}
 bookmarks: ${tweet.bookmarkCount || 0}
 quotes: ${tweet.quoteCount || 0}
-is_thread: false
-media_count: ${mediaFiles.length}
+is_thread: ${isThread}
+thread_count: ${allTweets.length}
+media_count: ${totalMedia}
 saved_at: "${new Date().toISOString()}"
 ---
 
-# Tweet by ${tweet.author.name} (@${tweet.author.userName})
-
-<img src="${profilePicPath}" alt="Profile Picture" width="48" height="48" style="border-radius: 50%;">
-
-**[@${tweet.author.userName}](https://twitter.com/${tweet.author.userName})** · ${tweet.createdAt}
-
----
-
-## Content
-
-${processedText}
-
 `;
-  
-  // Add media section
-  if (mediaFiles.length > 0) {
-    markdown += `\n## Media\n\n`;
-    for (const media of mediaFiles) {
-      if (media.type === 'image') {
-        markdown += `![${media.alt}](${media.path})\n\n`;
-      } else if (media.type === 'video') {
-        markdown += `🎬 **Video**: [${media.alt}](${media.path})\n\n`;
-      }
+
+  // Author header
+  const authorLine = profilePicPath
+    ? `<img src="${profilePicPath}" alt="@${tweet.author.userName}" width="48" height="48" style="border-radius:50%;vertical-align:middle;"> `
+    : '';
+  md += `${authorLine}**${tweet.author.name}** · [@${tweet.author.userName}](https://x.com/${tweet.author.userName})\n\n`;
+  md += `${tweet.createdAt}\n\n`;
+  md += `---\n\n`;
+
+  // Title
+  if (isThread) {
+    md += `# Thread by @${tweet.author.userName} (${allTweets.length} tweets)\n\n`;
+  } else if (isArticle) {
+    md += `# Article by @${tweet.author.userName}\n\n`;
+  } else {
+    md += `# Tweet by @${tweet.author.userName}\n\n`;
+  }
+
+  // Content
+  for (let i = 0; i < tweetDataList.length; i++) {
+    const { tweet: tw, processedText, mediaFiles } = tweetDataList[i];
+    md += renderSingleTweet(tw, processedText, mediaFiles, profilePicPath, i, allTweets.length);
+    if (i < tweetDataList.length - 1) md += '---\n\n';
+  }
+
+  // If article, try to fetch article content
+  if (isArticle) {
+    md += `---\n\n## Article Content\n\n`;
+    md += `**Article URL**: [${articleUrl}](${articleUrl})\n\n`;
+    const { title, content } = await fetchArticleContent(articleUrl);
+    if (title) md += `**Title**: ${title}\n\n`;
+    if (content && content.length > 50) {
+      md += content + '\n\n';
+    } else {
+      md += `> *Article content could not be extracted automatically. Visit the link above to read the full article.*\n\n`;
     }
   }
-  
-  // Add quoted tweet if present
-  if (tweet.quoted_tweet) {
-    markdown += `\n## Quoted Tweet\n\n`;
-    markdown += `> **@${tweet.quoted_tweet.author?.userName || 'unknown'}**: ${tweet.quoted_tweet.text || ''}\n`;
-    markdown += `> [View quoted tweet](${tweet.quoted_tweet.url || ''})\n\n`;
+
+  // Quoted tweet
+  if (tweet.quoted_tweet && tweet.quoted_tweet.text) {
+    md += `---\n\n## Quoted Tweet\n\n`;
+    md += `> **${tweet.quoted_tweet.author?.name || 'Unknown'}** (@${tweet.quoted_tweet.author?.userName || 'unknown'}):\n>\n`;
+    const qtText = processText(tweet.quoted_tweet.text, tweet.quoted_tweet.entities);
+    for (const line of qtText.split('\n')) {
+      md += `> ${line}\n`;
+    }
+    if (tweet.quoted_tweet.url) {
+      md += `>\n> [View original](${tweet.quoted_tweet.url})\n`;
+    }
+    md += '\n';
   }
-  
-  // Add metadata
-  markdown += `---
 
-## Engagement
+  // Engagement
+  md += `---\n\n## Engagement\n\n`;
+  md += `| Metric | Count |\n|--------|-------|\n`;
+  md += `| Likes | ${tweet.likeCount || 0} |\n`;
+  md += `| Retweets | ${tweet.retweetCount || 0} |\n`;
+  md += `| Replies | ${tweet.replyCount || 0} |\n`;
+  md += `| Views | ${tweet.viewCount || 0} |\n`;
+  md += `| Bookmarks | ${tweet.bookmarkCount || 0} |\n`;
+  md += `| Quotes | ${tweet.quoteCount || 0} |\n\n`;
 
-| Metric | Count |
-|--------|-------|
-| ❤️ Likes | ${tweet.likeCount || 0} |
-| 🔁 Retweets | ${tweet.retweetCount || 0} |
-| 💬 Replies | ${tweet.replyCount || 0} |
-| 👁️ Views | ${tweet.viewCount || 0} |
-| 🔖 Bookmarks | ${tweet.bookmarkCount || 0} |
-| 💭 Quotes | ${tweet.quoteCount || 0} |
+  // Source
+  md += `## Source\n\n`;
+  md += `- **Original**: [View on X](${tweet.url})\n`;
+  md += `- **Archived**: ${new Date().toISOString()}\n`;
 
-## Source
+  fs.writeFileSync(filename, md);
+  console.log(`\nGenerated: ${filename}`);
 
-- **Original Tweet**: [View on Twitter](${tweet.url})
-- **Archived**: ${new Date().toISOString()}
-`;
-  
-  fs.writeFileSync(filename, markdown);
-  console.log(`Generated: ${filename}`);
-  
-  // Output for GitHub Actions
+  // GitHub Actions output
   if (process.env.GITHUB_OUTPUT) {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `filename=${filename}\n`);
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `tweet_id=${tweetId}\n`);
   }
 }
 
-processTweet().catch(err => {
-  console.error('Error:', err);
+main().catch(err => {
+  console.error('FATAL:', err.message);
   process.exit(1);
 });

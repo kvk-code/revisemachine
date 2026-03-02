@@ -26,94 +26,33 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Fetch Tweet and Generate Archive
-        id: fetch-tweet
+      - name: Archive Tweet
+        id: archive
         env:
           TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
         run: |
-          # Get tweet URL from either dispatch type
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            TWEET_URL="${{ github.event.client_payload.tweet_url }}"
+            export TWEET_URL="${{ github.event.client_payload.tweet_url }}"
           else
-            TWEET_URL="${{ github.event.inputs.tweet_url }}"
+            export TWEET_URL="${{ github.event.inputs.tweet_url }}"
           fi
-          
-          echo "Processing tweet: $TWEET_URL"
-          
-          # Extract tweet ID from URL
-          TWEET_ID=$(echo "$TWEET_URL" | grep -oP '(?<=status/)\d+')
-          
-          if [ -z "$TWEET_ID" ]; then
-            echo "Error: Could not extract tweet ID from URL"
-            exit 1
-          fi
-          
-          echo "Tweet ID: $TWEET_ID"
-          echo "tweet_id=$TWEET_ID" >> $GITHUB_OUTPUT
-          
-          # Fetch tweet from twitterapi.io
-          RESPONSE=$(curl -s --request GET \
-            --url "https://api.twitterapi.io/twitter/tweets?tweet_ids=$TWEET_ID" \
-            --header "X-API-Key: $TWITTER_API_KEY")
-          
-          echo "$RESPONSE" > tweet_response.json
-          
-          # Check if successful
-          STATUS=$(echo "$RESPONSE" | jq -r '.status')
-          if [ "$STATUS" != "success" ]; then
-            echo "Error: API request failed"
-            cat tweet_response.json
-            exit 1
-          fi
-          
-          echo "Tweet fetched successfully"
-          
-          # Extract basic tweet info
-          TWEET_DATA=$(cat tweet_response.json)
-          AUTHOR_USERNAME=$(echo "$TWEET_DATA" | jq -r '.tweets[0].author.userName')
-          CONVERSATION_ID=$(echo "$TWEET_DATA" | jq -r '.tweets[0].conversationId')
-          IN_REPLY_TO_ID=$(echo "$TWEET_DATA" | jq -r '.tweets[0].inReplyToId')
-          
-          # Check if this is part of a thread (same author replying to themselves)
-          IS_THREAD="false"
-          THREAD_TWEETS="[]"
-          
-          if [ "$CONVERSATION_ID" != "null" ] && [ "$CONVERSATION_ID" != "$TWEET_ID" ]; then
-            echo "Checking for thread (conversation: $CONVERSATION_ID)..."
-            
-            # Fetch the conversation/thread
-            THREAD_RESPONSE=$(curl -s --request GET \
-              --url "https://api.twitterapi.io/twitter/tweet/replies?tweetId=$CONVERSATION_ID" \
-              --header "X-API-Key: $TWITTER_API_KEY")
-            
-            echo "$THREAD_RESPONSE" > thread_response.json
-            
-            # Filter for tweets by the same author (thread tweets)
-            THREAD_TWEETS=$(echo "$THREAD_RESPONSE" | jq --arg author "$AUTHOR_USERNAME" \
-              '[.replies[]? | select(.author.userName == $author)]')
-            
-            THREAD_COUNT=$(echo "$THREAD_TWEETS" | jq 'length')
-            if [ "$THREAD_COUNT" -gt 0 ]; then
-              IS_THREAD="true"
-              echo "Found thread with $THREAD_COUNT additional tweets"
-            fi
-          fi
-          
-          # Create directories
-          mkdir -p tweets
-          mkdir -p "tweets/media"
-          
-          # Generate date prefix for filename
-          CREATED_AT=$(echo "$TWEET_DATA" | jq -r '.tweets[0].createdAt')
-          DATE_PREFIX=$(date -d "$CREATED_AT" +"%Y-%m-%d" 2>/dev/null || date +"%Y-%m-%d")
-          
-          # Run the Node.js script to process tweet and download media
-          node scripts/process_tweet.js "$DATE_PREFIX"
+          echo "Processing: $TWEET_URL"
+          node scripts/process_tweet.js
 
       - name: Commit and Push
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add tweets/
-          git commit -m "Archive tweet ${{ steps.fetch-tweet.outputs.tweet_id }}" || echo "No changes to commit"
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+              TWEET_URL="${{ github.event.client_payload.tweet_url }}"
+            else
+              TWEET_URL="${{ github.event.inputs.tweet_url }}"
+            fi
+            TWEET_ID=$(echo "$TWEET_URL" | grep -oP '(?<=status/)\d+')
+            git commit -m "Archive tweet ${TWEET_ID}"
+            git push
+          fi

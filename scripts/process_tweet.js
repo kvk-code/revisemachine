@@ -100,12 +100,26 @@ function formatMentions(text, entities) {
   return out;
 }
 
-function processText(text, entities) {
+function stripMediaUrls(text, extendedEntities) {
+  // Media t.co URLs appear in the tweet text as placeholders. Since we embed
+  // media directly in the markdown, strip them from the text.
+  if (!extendedEntities || !extendedEntities.media) return text;
+  let out = text;
+  for (const m of extendedEntities.media) {
+    if (m.url) {
+      out = out.replace(m.url, '').trim();
+    }
+  }
+  return out;
+}
+
+function processText(text, entities, extendedEntities) {
   let out = text || '';
+  out = stripMediaUrls(out, extendedEntities);
   out = expandUrls(out, entities);
   out = formatHashtags(out, entities);
   out = formatMentions(out, entities);
-  return out;
+  return out.trim();
 }
 
 // ─── Media Handling ─────────────────────────────────────────────────────────
@@ -408,7 +422,7 @@ async function main() {
     const twMediaDir = i === 0 ? mediaDir : `tweets/media/${tw.id}`;
     if (i > 0) fs.mkdirSync(twMediaDir, { recursive: true });
 
-    const processedText = processText(tw.text, tw.entities);
+    const processedText = processText(tw.text, tw.entities, tw.extendedEntities);
     const mediaFiles = await downloadMedia(tw, twMediaDir);
     
     tweetDataList.push({ tweet: tw, processedText, mediaFiles });
@@ -481,7 +495,7 @@ saved_at: "${new Date().toISOString()}"
   if (tweet.quoted_tweet && tweet.quoted_tweet.text) {
     md += `---\n\n## Quoted Tweet\n\n`;
     md += `> **${tweet.quoted_tweet.author?.name || 'Unknown'}** (@${tweet.quoted_tweet.author?.userName || 'unknown'}):\n>\n`;
-    const qtText = processText(tweet.quoted_tweet.text, tweet.quoted_tweet.entities);
+    const qtText = processText(tweet.quoted_tweet.text, tweet.quoted_tweet.entities, tweet.quoted_tweet.extendedEntities);
     for (const line of qtText.split('\n')) {
       md += `> ${line}\n`;
     }

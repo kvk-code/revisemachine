@@ -307,150 +307,36 @@ function detectArticleUrl(tweet) {
   return null;
 }
 
-async function fetchArticleContent(articleUrl) {
-  // Strategy 1: Try Puppeteer headless browser
-  const puppeteerResult = await fetchArticleViaPuppeteer(articleUrl);
-  if (puppeteerResult.content) return puppeteerResult;
-
-  // Strategy 2: Try oEmbed API (public, no auth needed)
-  const oembedResult = await fetchArticleViaOembed(articleUrl);
-  if (oembedResult.content) return oembedResult;
-
-  return { title: '', content: null };
-}
-
-async function fetchArticleViaOembed(articleUrl) {
+async function fetchArticleContent(tweetId) {
   try {
-    // The original tweet URL works with oEmbed even if the article URL doesn't
-    const tweetUrl = `https://x.com/${TWEET_URL.match(/x\.com\/([^/]+\/status\/\d+)/)?.[1] || ''}`;
-    const oembedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(tweetUrl)}&omit_script=true`;
-    console.log(`  Trying oEmbed: ${oembedUrl}`);
-    const res = await httpGet(oembedUrl);
-    if (res.statusCode === 200) {
-      const data = JSON.parse(res.body);
-      if (data.html) {
-        // Extract text from the oEmbed HTML
-        let text = data.html.replace(/<br\s*\/?>/gi, '\n');
-        text = text.replace(/<\/p>/gi, '\n\n');
-        text = text.replace(/<[^>]+>/g, '');
-        text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-        text = text.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
-        text = text.replace(/\n{3,}/g, '\n\n').trim();
-        if (text.length > 50) {
-          console.log(`  oEmbed extracted: ${text.length} chars`);
-          return { title: data.author_name || '', content: text };
-        }
-      }
-    }
-  } catch (e) {
-    console.error(`  oEmbed failed: ${e.message}`);
-  }
-  return { title: '', content: null };
-}
-
-async function fetchArticleViaPuppeteer(articleUrl) {
-  let browser;
-  try {
-    console.log(`  Launching headless browser for article: ${articleUrl}`);
-    const puppeteer = require('puppeteer');
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-    });
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 900 });
-    await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-    // Navigate to the article
-    await page.goto(articleUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-    await sleep(5000);
-
-    // Extract using multiple strategies, picking the best result
-    const result = await page.evaluate(() => {
-      const title = document.title || '';
-
-      // Strategy A: Select specific text-bearing elements (headings + paragraphs + divs with text)
-      function extractViaElements() {
-        const selectors = 'article p, article h1, article h2, article h3, article h4, article h5, article h6, article li, article blockquote, article div[dir="auto"], article span[data-text="true"]';
-        let els = document.querySelectorAll(selectors);
-        if (els.length === 0) {
-          // Broaden: look in main or body
-          els = document.querySelectorAll('main p, main h1, main h2, main h3, main h4, main h5, main h6, main li, main div[dir="auto"]');
-        }
-        if (els.length === 0) return '';
-
-        const seen = new Set();
-        const parts = [];
-        for (const el of els) {
-          const text = el.innerText.trim();
-          if (!text || text.length < 3 || seen.has(text)) continue;
-          seen.add(text);
-          const tag = el.tagName.toLowerCase();
-          if (tag.match(/^h[1-6]$/)) {
-            parts.push('#'.repeat(parseInt(tag[1])) + ' ' + text);
-          } else if (tag === 'blockquote') {
-            parts.push('> ' + text);
-          } else if (tag === 'li') {
-            parts.push('- ' + text);
-          } else {
-            parts.push(text);
-          }
-        }
-        return parts.join('\n\n');
-      }
-
-      // Strategy B: Get innerText from the largest content container
-      function extractViaInnerText() {
-        const candidates = [
-          document.querySelector('article'),
-          document.querySelector('[role="article"]'),
-          document.querySelector('main'),
-        ].filter(Boolean);
-
-        let best = '';
-        for (const c of candidates) {
-          const text = c.innerText;
-          if (text.length > best.length) best = text;
-        }
-        return best;
-      }
-
-      const fromElements = extractViaElements();
-      const fromInnerText = extractViaInnerText();
-
-      // Pick whichever gives more content
-      const content = fromElements.length > fromInnerText.length ? fromElements : fromInnerText;
-      return { title, content, fromElements: fromElements.length, fromInnerText: fromInnerText.length };
-    });
-
-    await browser.close();
-
-    let title = result.title.replace(/ \/ X$/, '').replace(/ on X$/, '').trim();
-    console.log(`  Extraction results: elements=${result.fromElements} chars, innerText=${result.fromInnerText} chars`);
-
-    // Clean up X UI text from the content
-    let content = result.content || '';
-    const uiLines = ['Sign up', 'Log in', 'Post', 'Search', 'Relevant people',
-      'What\'s happening', 'Show more', 'Terms of Service', 'Privacy Policy',
-      'Cookie Policy', 'Trending now', 'Who to follow', 'Follow',
-      'Don\'t miss what\'s happening', 'Imprint', 'Ads info'];
-    content = content.split('\n').filter(line => {
-      const trimmed = line.trim();
-      return trimmed.length > 0 && !uiLines.includes(trimmed) && !/^© \d{4} X Corp/.test(trimmed);
-    }).join('\n');
-    content = content.replace(/\n{3,}/g, '\n\n').trim();
-
-    if (content.length > 100 && !content.includes('JavaScript is not available')) {
-      console.log(`  Article content extracted: ${content.length} chars`);
-      return { title, content };
+    console.log(`  Fetching article via twitterapi.io Article API for tweet ${tweetId}...`);
+    await sleep(5500); // rate limit
+    const res = await httpGet(
+      `https://api.twitterapi.io/twitter/article?tweet_id=${tweetId}`,
+      { 'X-API-Key': API_KEY }
+    );
+    const data = JSON.parse(res.body);
+    if (data.status !== 'success' || !data.article) {
+      console.error(`  Article API returned: ${JSON.stringify(data).substring(0, 200)}`);
+      return { title: '', coverImage: '', content: null };
     }
 
-    console.log(`  Puppeteer content too short: ${content.length} chars`);
-    return { title, content: null };
+    const article = data.article;
+    const title = article.title || '';
+    const coverImage = article.cover_media_img_url || '';
+    const contents = article.contents || [];
+
+    // Build article text from content blocks
+    const contentText = contents
+      .map(c => c.text || '')
+      .filter(t => t.trim().length > 0)
+      .join('\n\n');
+
+    console.log(`  Article fetched: "${title}" (${contentText.length} chars, ${contents.length} blocks)`);
+    return { title, coverImage, content: contentText || null };
   } catch (e) {
-    console.error(`  Puppeteer failed: ${e.message}`);
-    if (browser) try { await browser.close(); } catch (_) {}
-    return { title: '', content: null };
+    console.error(`  Article API failed: ${e.message}`);
+    return { title: '', coverImage: '', content: null };
   }
 }
 
@@ -580,11 +466,12 @@ saved_at: "${new Date().toISOString()}"
     if (i < tweetDataList.length - 1) md += '---\n\n';
   }
 
-  // If article, fetch and embed article content
+  // If article, fetch and embed article content via API
   if (isArticle) {
     md += `---\n\n## Article Content\n\n`;
     md += `**Article URL**: [${articleUrl}](${articleUrl})\n\n`;
-    const { title, content } = await fetchArticleContent(articleUrl);
+    const { title, coverImage, content } = await fetchArticleContent(tweetId);
+    if (coverImage) md += `![Cover](${coverImage})\n\n`;
     if (title) md += `### ${title}\n\n`;
     if (content) {
       md += content + '\n\n';

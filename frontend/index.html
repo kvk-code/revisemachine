@@ -102,7 +102,7 @@
                     <p class="text-xs text-gray-500 mt-1">From twitterapi.io dashboard (~$0.15 per 1000 tweets)</p>
                 </div>
 
-                <div class="flex gap-3">
+                <div class="flex gap-3 flex-wrap">
                     <button onclick="saveConfig()" 
                         class="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-6 rounded-lg transition-colors">
                         💾 Save to Browser
@@ -113,6 +113,7 @@
                     </button>
                 </div>
                 
+                <div id="secret-status" class="hidden text-sm mt-2 p-2 bg-gray-50 rounded-lg"></div>
                 <div id="config-status" class="hidden text-sm mt-2"></div>
             </div>
         </section>
@@ -191,6 +192,51 @@
             return sodium.to_base64(encryptedBytes, sodium.base64_variants.ORIGINAL);
         }
 
+        // Check if TWITTER_API_KEY secret already exists
+        async function checkSecretExists(repo, pat) {
+            try {
+                const response = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/TWITTER_API_KEY`, {
+                    headers: {
+                        'Accept': 'application/vnd.github+json',
+                        'Authorization': `Bearer ${pat}`,
+                        'X-GitHub-Api-Version': '2022-11-28'
+                    }
+                });
+                return response.status === 200;
+            } catch {
+                return false;
+            }
+        }
+
+        // Check secret status when repo/pat changes
+        async function checkAndUpdateSecretStatus() {
+            const repo = document.getElementById('github-repo').value.trim();
+            const pat = document.getElementById('github-pat').value.trim();
+            const secretBtn = document.getElementById('secret-btn');
+            const secretStatus = document.getElementById('secret-status');
+            
+            if (!repo || !pat || !repo.includes('/')) {
+                secretStatus.classList.add('hidden');
+                secretBtn.innerHTML = '🔐 Save Twitter Key to GitHub Secret';
+                return;
+            }
+            
+            try {
+                const exists = await checkSecretExists(repo, pat);
+                if (exists) {
+                    secretStatus.innerHTML = '✅ <span class="text-green-700">TWITTER_API_KEY secret already exists in this repository</span>';
+                    secretStatus.classList.remove('hidden');
+                    secretBtn.innerHTML = '🔄 Update Twitter Key Secret';
+                } else {
+                    secretStatus.innerHTML = '⚠️ <span class="text-yellow-700">TWITTER_API_KEY secret not found - click button to create it</span>';
+                    secretStatus.classList.remove('hidden');
+                    secretBtn.innerHTML = '🔐 Save Twitter Key to GitHub Secret';
+                }
+            } catch {
+                secretStatus.classList.add('hidden');
+            }
+        }
+
         async function saveTwitterKeyAsSecret() {
             const repo = document.getElementById('github-repo').value.trim();
             const pat = document.getElementById('github-pat').value.trim();
@@ -206,9 +252,14 @@
                 return;
             }
             
+            // Check if secret already exists
+            const secretExists = await checkSecretExists(repo, pat);
+            
             const btn = document.getElementById('secret-btn');
             btn.disabled = true;
-            btn.innerHTML = '<span class="animate-pulse">⏳ Creating secret...</span>';
+            btn.innerHTML = secretExists 
+                ? '<span class="animate-pulse">⏳ Updating secret...</span>'
+                : '<span class="animate-pulse">⏳ Creating secret...</span>';
             
             try {
                 // Step 1: Get the repository's public key for secrets
@@ -254,10 +305,14 @@
                     localStorage.setItem('getit_pat', pat);
                     localStorage.setItem('getit_twitter_key', twitterKey);
                     
+                    const action = secretResponse.status === 201 ? 'created' : 'updated';
                     showStatus('config-status', `
-                        ✅ <strong>Twitter API Key saved as GitHub Secret!</strong><br>
-                        <span class="text-sm">The secret TWITTER_API_KEY has been securely stored in your repository.</span>
+                        ✅ <strong>Twitter API Key ${action} successfully!</strong><br>
+                        <span class="text-sm">The secret TWITTER_API_KEY has been securely ${action} in your repository.</span>
                     `, 'success');
+                    
+                    // Update the secret status indicator
+                    await checkAndUpdateSecretStatus();
                 } else {
                     const error = await secretResponse.json().catch(() => ({}));
                     throw new Error(error.message || 'Failed to create secret');
@@ -266,7 +321,8 @@
                 showStatus('config-status', `❌ ${error.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = '🔐 Save Twitter Key to GitHub Secret';
+                const stillExists = await checkSecretExists(repo, pat);
+                btn.innerHTML = stillExists ? '🔄 Update Twitter Key Secret' : '🔐 Save Twitter Key to GitHub Secret';
             }
         }
 

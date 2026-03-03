@@ -3,196 +3,968 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GetIt - Save Tweets to Your GitHub Repository</title>
+    <title>GetIt — Save Tweets for the Future</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/dist/modules/libsodium-wrappers.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; }
-        .gradient-bg {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        /* ── CSS Custom Properties ── */
+        :root {
+            --bg-deep: #06070a;
+            --bg-card: rgba(10, 14, 26, 0.75);
+            --bg-card-hover: rgba(14, 20, 38, 0.85);
+            --border-glow: rgba(0, 229, 255, 0.15);
+            --border-glow-hover: rgba(0, 229, 255, 0.35);
+            --cyan: #00e5ff;
+            --cyan-dim: #00a5b8;
+            --violet: #7c5cfc;
+            --violet-dim: #5a3fd4;
+            --amber: #f59e0b;
+            --red: #ef4444;
+            --green: #10b981;
+            --text-primary: #e0e6f0;
+            --text-secondary: #8892a8;
+            --text-muted: #4a5268;
+            --input-bg: rgba(6, 8, 16, 0.6);
+            --input-border: rgba(0, 229, 255, 0.12);
+            --input-focus: rgba(0, 229, 255, 0.4);
         }
+
+        /* ── Light theme overrides ── */
+        [data-theme="light"] {
+            --bg-deep: #f0f2f7;
+            --bg-card: rgba(255, 255, 255, 0.85);
+            --bg-card-hover: rgba(255, 255, 255, 0.95);
+            --border-glow: rgba(100, 120, 160, 0.15);
+            --border-glow-hover: rgba(0, 180, 220, 0.3);
+            --cyan: #0097a7;
+            --cyan-dim: #00838f;
+            --violet: #5e35b1;
+            --violet-dim: #4527a0;
+            --amber: #e65100;
+            --text-primary: #1a1d2e;
+            --text-secondary: #4a5068;
+            --text-muted: #8890a4;
+            --input-bg: rgba(255, 255, 255, 0.7);
+            --input-border: rgba(100, 120, 160, 0.2);
+            --input-focus: rgba(0, 151, 167, 0.4);
+            --grid-color: rgba(100, 120, 160, 0.06);
+            --glow-radial: rgba(0, 151, 167, 0.04);
+            --glow-radial2: rgba(94, 53, 177, 0.02);
+        }
+
+        :root {
+            --grid-color: rgba(0, 229, 255, 0.03);
+            --glow-radial: rgba(0, 229, 255, 0.06);
+            --glow-radial2: rgba(124, 92, 252, 0.03);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'IBM Plex Mono', monospace;
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            position: relative;
+            transition: background 0.4s ease, color 0.4s ease;
+        }
+
+        /* ── Animated Grid Background ── */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(var(--grid-color) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+            background-size: 60px 60px;
+            animation: gridDrift 20s linear infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ── Radial glow overlay ── */
+        body::after {
+            content: '';
+            position: fixed;
+            top: -20%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120vw;
+            height: 60vh;
+            background: radial-gradient(ellipse at center, var(--glow-radial) 0%, var(--glow-radial2) 40%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        @keyframes gridDrift {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(60px, 60px); }
+        }
+
+        /* ── Noise overlay ── */
+        .noise-overlay {
+            position: fixed;
+            inset: 0;
+            opacity: 0.025;
+            pointer-events: none;
+            z-index: 1;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            background-repeat: repeat;
+            background-size: 256px 256px;
+        }
+
+        /* ── Layout container ── */
+        .vault-container {
+            position: relative;
+            z-index: 2;
+            max-width: 56rem;
+            margin: 0 auto;
+            padding: 0 1.25rem;
+        }
+
+        /* ── Header ── */
+        .vault-header {
+            padding: 2.5rem 0 1.5rem;
+            border-bottom: 1px solid rgba(0, 229, 255, 0.08);
+            margin-bottom: 2rem;
+            animation: fadeSlideDown 0.8s ease-out both;
+        }
+
+        .vault-brand {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 800;
+            font-size: 2.25rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            background: linear-gradient(135deg, var(--cyan) 0%, var(--violet) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            display: inline-block;
+            position: relative;
+        }
+
+        .vault-brand::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, var(--cyan), var(--violet), transparent);
+            opacity: 0.5;
+        }
+
+        .vault-tagline {
+            font-family: 'Syne', sans-serif;
+            font-weight: 400;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+            letter-spacing: 0.05em;
+        }
+
+        .vault-tagline span {
+            color: var(--cyan);
+            font-weight: 600;
+        }
+
+        /* ── Glass Cards ── */
+        .glass-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-glow);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 1.75rem;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            transition: border-color 0.4s ease, box-shadow 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.2), rgba(124, 92, 252, 0.2), transparent);
+        }
+
+        .glass-card:hover {
+            border-color: var(--border-glow-hover);
+            box-shadow: 0 0 40px rgba(0, 229, 255, 0.04), inset 0 0 40px rgba(0, 229, 255, 0.01);
+        }
+
+        /* ── Section titles ── */
+        .section-title {
+            font-family: 'Syne', sans-serif;
+            font-weight: 700;
+            font-size: 1.25rem;
+            letter-spacing: 0.04em;
+            color: var(--text-primary);
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .section-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+        }
+
+        .icon-cyan { background: rgba(0, 229, 255, 0.1); border: 1px solid rgba(0, 229, 255, 0.2); color: var(--cyan); }
+        .icon-violet { background: rgba(124, 92, 252, 0.1); border: 1px solid rgba(124, 92, 252, 0.2); color: var(--violet); }
+        .icon-amber { background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--amber); }
+        .icon-green { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--green); }
+
+        /* ── Inputs ── */
+        .vault-input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 10px;
+            color: var(--text-primary);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.875rem;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+
+        .vault-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .vault-input:focus {
+            border-color: var(--input-focus);
+            box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.08), 0 0 20px rgba(0, 229, 255, 0.05);
+        }
+
+        /* ── Labels ── */
+        .vault-label {
+            display: block;
+            font-family: 'Syne', sans-serif;
+            font-weight: 600;
+            font-size: 0.8rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .vault-label a {
+            color: var(--cyan);
+            text-decoration: none;
+            text-transform: none;
+            letter-spacing: normal;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .vault-label a:hover {
+            color: #66f0ff;
+            text-decoration: underline;
+        }
+
+        .vault-hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.35rem;
+            line-height: 1.5;
+        }
+
+        .vault-hint strong {
+            color: var(--text-secondary);
+        }
+
+        /* ── Buttons ── */
+        .btn-vault {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.7rem 1.5rem;
+            border: none;
+            border-radius: 10px;
+            font-family: 'Syne', sans-serif;
+            font-weight: 600;
+            font-size: 0.85rem;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-vault::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .btn-vault:hover::before {
+            opacity: 1;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--cyan-dim), var(--cyan));
+            color: #06070a;
+        }
+        .btn-primary:hover {
+            box-shadow: 0 0 30px rgba(0, 229, 255, 0.3), 0 0 60px rgba(0, 229, 255, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, var(--violet-dim), var(--violet));
+            color: #ffffff;
+        }
+        .btn-secondary:hover {
+            box-shadow: 0 0 30px rgba(124, 92, 252, 0.3), 0 0 60px rgba(124, 92, 252, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .btn-action {
+            background: linear-gradient(135deg, #d97706, var(--amber));
+            color: #06070a;
+            padding: 0.85rem 2rem;
+            font-size: 0.9rem;
+        }
+        .btn-action:hover {
+            box-shadow: 0 0 30px rgba(245, 158, 11, 0.3), 0 0 60px rgba(245, 158, 11, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .btn-vault:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        /* ── Step badges (setup guide) ── */
+        .step-badge {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            font-size: 0.7rem;
+            flex-shrink: 0;
+            border: 1px solid rgba(0, 229, 255, 0.3);
+            background: rgba(0, 229, 255, 0.08);
+            color: var(--cyan);
+        }
+
+        .step-text {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .step-text strong {
+            color: var(--text-primary);
+        }
+
+        .step-text a {
+            color: var(--cyan);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .step-text a:hover {
+            color: #66f0ff;
+            text-decoration: underline;
+        }
+
+        .step-text code {
+            background: rgba(0, 229, 255, 0.08);
+            border: 1px solid rgba(0, 229, 255, 0.1);
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: var(--cyan);
+        }
+
+        /* ── How it works steps ── */
+        .flow-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            position: relative;
+            padding-bottom: 1rem;
+        }
+
+        .flow-step:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            left: 13px;
+            top: 32px;
+            bottom: 0;
+            width: 1px;
+            background: linear-gradient(to bottom, rgba(124, 92, 252, 0.3), transparent);
+        }
+
+        .flow-badge {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            font-size: 0.7rem;
+            flex-shrink: 0;
+            border: 1px solid rgba(124, 92, 252, 0.3);
+            background: rgba(124, 92, 252, 0.08);
+            color: var(--violet);
+        }
+
+        .flow-text {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .flow-text strong {
+            color: var(--text-primary);
+        }
+
+        .flow-text code {
+            background: rgba(124, 92, 252, 0.08);
+            border: 1px solid rgba(124, 92, 252, 0.1);
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            color: var(--violet);
+        }
+
+        /* ── Status messages ── */
+        .status-msg {
+            border-radius: 10px;
+            padding: 1rem 1.25rem;
+            margin-top: 0.75rem;
+            font-size: 0.8rem;
+            line-height: 1.6;
+            border: 1px solid;
+        }
+
+        .status-success {
+            background: rgba(16, 185, 129, 0.08);
+            border-color: rgba(16, 185, 129, 0.2);
+            color: #6ee7b7;
+        }
+
+        .status-error {
+            background: rgba(239, 68, 68, 0.08);
+            border-color: rgba(239, 68, 68, 0.2);
+            color: #fca5a5;
+        }
+
+        .status-info {
+            background: rgba(0, 229, 255, 0.05);
+            border-color: rgba(0, 229, 255, 0.15);
+            color: var(--text-secondary);
+        }
+
+        .status-msg a {
+            color: var(--cyan);
+            text-decoration: underline;
+        }
+
+        /* ── Privacy bar ── */
+        .privacy-bar {
+            text-align: center;
+            padding: 1.5rem 0;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            border-top: 1px solid rgba(0, 229, 255, 0.05);
+            margin-top: 1rem;
+        }
+
+        .privacy-bar .shield {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            background: rgba(0, 229, 255, 0.05);
+            border: 1px solid rgba(0, 229, 255, 0.1);
+            border-radius: 20px;
+            padding: 0.35rem 0.9rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+        }
+
+        .privacy-bar .shield svg {
+            width: 14px;
+            height: 14px;
+            color: var(--cyan);
+        }
+
+        /* ── Footer ── */
+        .vault-footer {
+            text-align: center;
+            padding: 1.5rem 0 2.5rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .vault-footer a {
+            color: var(--violet);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .vault-footer a:hover {
+            color: #a78bfa;
+            text-decoration: underline;
+        }
+
+        /* ── Entrance animations ── */
+        @keyframes fadeSlideDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeSlideUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .anim-1 { animation: fadeSlideUp 0.7s ease-out 0.15s both; }
+        .anim-2 { animation: fadeSlideUp 0.7s ease-out 0.3s both; }
+        .anim-3 { animation: fadeSlideUp 0.7s ease-out 0.45s both; }
+        .anim-4 { animation: fadeSlideUp 0.7s ease-out 0.6s both; }
+        .anim-5 { animation: fadeSlideUp 0.7s ease-out 0.75s both; }
+        .anim-6 { animation: fadeSlideUp 0.7s ease-out 0.9s both; }
+
+        /* ── Pulse glow on CTA ── */
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 20px rgba(245, 158, 11, 0.15); }
+            50% { box-shadow: 0 0 35px rgba(245, 158, 11, 0.25), 0 0 60px rgba(245, 158, 11, 0.08); }
+        }
+
+        .btn-action { animation: pulseGlow 3s ease-in-out infinite; }
+        .btn-action:hover { animation: none; }
+
+        /* ── Scanline accent on header ── */
+        .scanline-accent {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .scanline-accent::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.03), transparent);
+            animation: scanline 6s linear infinite;
+        }
+
+        @keyframes scanline {
+            0% { left: -50%; }
+            100% { left: 150%; }
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 640px) {
+            .vault-brand { font-size: 1.5rem; }
+            .glass-card { padding: 1.25rem; }
+            .btn-vault { padding: 0.6rem 1rem; font-size: 0.8rem; }
+        }
+
+        /* ── Theme toggle button ── */
+        .theme-toggle {
+            position: relative;
+            width: 52px;
+            height: 28px;
+            border-radius: 14px;
+            border: 1px solid var(--border-glow);
+            background: var(--input-bg);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            padding: 0 3px;
+            flex-shrink: 0;
+        }
+
+        .theme-toggle:hover {
+            border-color: var(--border-glow-hover);
+        }
+
+        .theme-toggle .toggle-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--cyan);
+            transition: transform 0.3s ease, background 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .theme-toggle .toggle-thumb svg {
+            width: 12px;
+            height: 12px;
+            color: var(--bg-deep);
+        }
+
+        [data-theme="light"] .theme-toggle .toggle-thumb {
+            transform: translateX(24px);
+            background: var(--violet);
+        }
+
+        /* ── Light theme: overrides for hardcoded rgba values ── */
+        [data-theme="light"] .glass-card::before {
+            background: linear-gradient(90deg, transparent, rgba(0, 151, 167, 0.15), rgba(94, 53, 177, 0.15), transparent);
+        }
+
+        [data-theme="light"] .glass-card:hover {
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+        }
+
+        [data-theme="light"] .glass-card {
+            backdrop-filter: blur(12px);
+            transition: border-color 0.4s ease, box-shadow 0.4s ease, background 0.4s ease;
+        }
+
+        [data-theme="light"] .noise-overlay { opacity: 0.01; }
+
+        [data-theme="light"] .vault-header {
+            border-bottom-color: rgba(100, 120, 160, 0.12);
+        }
+
+        [data-theme="light"] .vault-brand::after {
+            background: linear-gradient(90deg, var(--cyan), var(--violet), transparent);
+        }
+
+        [data-theme="light"] .step-badge {
+            border-color: rgba(0, 151, 167, 0.3);
+            background: rgba(0, 151, 167, 0.08);
+            color: var(--cyan);
+        }
+
+        [data-theme="light"] .icon-cyan { background: rgba(0, 151, 167, 0.08); border-color: rgba(0, 151, 167, 0.2); }
+        [data-theme="light"] .icon-violet { background: rgba(94, 53, 177, 0.08); border-color: rgba(94, 53, 177, 0.2); }
+        [data-theme="light"] .icon-amber { background: rgba(230, 81, 0, 0.08); border-color: rgba(230, 81, 0, 0.2); }
+        [data-theme="light"] .icon-green { background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.2); }
+
+        [data-theme="light"] .step-text code {
+            background: rgba(0, 151, 167, 0.06);
+            border-color: rgba(0, 151, 167, 0.12);
+            color: var(--cyan);
+        }
+
+        [data-theme="light"] .flow-badge {
+            border-color: rgba(94, 53, 177, 0.25);
+            background: rgba(94, 53, 177, 0.06);
+        }
+
+        [data-theme="light"] .flow-step:not(:last-child)::after {
+            background: linear-gradient(to bottom, rgba(94, 53, 177, 0.2), transparent);
+        }
+
+        [data-theme="light"] .flow-text code {
+            background: rgba(94, 53, 177, 0.06);
+            border-color: rgba(94, 53, 177, 0.12);
+            color: var(--violet);
+        }
+
+        [data-theme="light"] .status-success {
+            background: rgba(16, 185, 129, 0.08);
+            border-color: rgba(16, 185, 129, 0.2);
+            color: #065f46;
+        }
+
+        [data-theme="light"] .status-error {
+            background: rgba(239, 68, 68, 0.08);
+            border-color: rgba(239, 68, 68, 0.2);
+            color: #991b1b;
+        }
+
+        [data-theme="light"] .status-info {
+            background: rgba(0, 151, 167, 0.05);
+            border-color: rgba(0, 151, 167, 0.15);
+            color: var(--text-secondary);
+        }
+
+        [data-theme="light"] .status-msg a { color: var(--cyan); }
+
+        [data-theme="light"] .btn-primary { color: #ffffff; }
+        [data-theme="light"] .btn-action { color: #ffffff; }
+
+        [data-theme="light"] .privacy-bar {
+            border-top-color: rgba(100, 120, 160, 0.1);
+        }
+
+        [data-theme="light"] .privacy-bar .shield {
+            background: rgba(0, 151, 167, 0.05);
+            border-color: rgba(0, 151, 167, 0.12);
+        }
+
+        [data-theme="light"] .scanline-accent::after {
+            background: linear-gradient(90deg, transparent, rgba(0, 151, 167, 0.04), transparent);
+        }
+
+        [data-theme="light"] .vault-label a:hover { color: #00695c; }
+        [data-theme="light"] .step-text a:hover { color: #00695c; }
     </style>
 </head>
-<body class="min-h-screen bg-gray-50">
-    <!-- Header -->
-    <header class="gradient-bg text-white py-6 px-4">
-        <div class="max-w-4xl mx-auto">
-            <h1 class="text-3xl font-bold">🐦 GetIt</h1>
-            <p class="mt-2 text-purple-100">Save tweets to your GitHub repository as markdown files</p>
-        </div>
-    </header>
+<body>
+    <!-- Noise texture overlay -->
+    <div class="noise-overlay"></div>
 
-    <!-- Main Content -->
-    <main class="max-w-4xl mx-auto px-4 py-8">
-        <!-- First Time Setup Guide -->
-        <section class="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-6 mb-6">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">📖 First-Time Setup (Do This Once)</h2>
-            <div class="space-y-3 text-sm text-gray-700">
-                <div class="flex items-start gap-3">
-                    <span class="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">1</span>
-                    <div>
+    <div class="vault-container">
+        <!-- ── Header ── -->
+        <header class="vault-header scanline-accent">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;">
+                <div>
+                    <div class="vault-brand">GetIt</div>
+                    <p class="vault-tagline">
+                        <span>Tweet Archive</span> &mdash; Save tweets to your GitHub repository as writing you can revisit anytime
+                    </p>
+                </div>
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle theme">
+                    <div class="toggle-thumb">
+                        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                    </div>
+                </button>
+            </div>
+        </header>
+
+        <!-- ── First-Time Setup Guide ── -->
+        <section class="glass-card anim-1" style="border-color: rgba(124, 92, 252, 0.15);">
+            <h2 class="section-title">
+                <span class="section-icon icon-violet">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                </span>
+                First-Time Setup
+            </h2>
+            <div style="display:flex;flex-direction:column;gap:1rem;">
+                <div style="display:flex;align-items:flex-start;gap:0.75rem;">
+                    <span class="step-badge">1</span>
+                    <div class="step-text">
                         <strong>Create your own copy of GetIt</strong><br>
-                        <a href="https://github.com/kvk-code/getit" target="_blank" class="text-purple-600 hover:underline">Go to GetIt repo</a> → Click <strong>"Use this template"</strong> → Name it (e.g., <code class="bg-white px-1 rounded">my-saved-tweets</code>) → Set to <strong>Private</strong>
+                        <a href="https://github.com/kvk-code/getit" target="_blank">Go to GetIt repo</a> &rarr; Click <strong>"Use this template"</strong> &rarr; Name it (e.g., <code>my-saved-tweets</code>) &rarr; Set to <strong>Private</strong>
                     </div>
                 </div>
-                <div class="flex items-start gap-3">
-                    <span class="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">2</span>
-                    <div>
+                <div style="display:flex;align-items:flex-start;gap:0.75rem;">
+                    <span class="step-badge">2</span>
+                    <div class="step-text">
                         <strong>Get your Twitter API Key</strong><br>
-                        Sign up at <a href="https://twitterapi.io/dashboard" target="_blank" class="text-purple-600 hover:underline">twitterapi.io</a> and copy your API key (~$0.15 per 1000 tweets)<br>
-                        <span class="text-gray-500 text-xs">The frontend will automatically save it as a GitHub Secret for you!</span>
+                        Sign up at <a href="https://twitterapi.io/dashboard" target="_blank">twitterapi.io</a> and copy your API key (~$0.15 per 1000 tweets)<br>
+                        <span style="color:var(--text-muted);font-size:0.75rem;">The frontend will automatically save it as a GitHub Secret for you.</span>
                     </div>
                 </div>
-                <div class="flex items-start gap-3">
-                    <span class="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                    <div>
-                        <strong>Create a Fine-Grained PAT (scoped to your repo only)</strong><br>
-                        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" class="text-purple-600 hover:underline">Create token</a> → 
-                        Repository access: <strong>Only select repositories</strong> → Select your repo → 
-                        Permissions: <strong>Contents: Read & Write</strong>, <strong>Secrets: Read & Write</strong>, <strong>Actions: Read & Write</strong>
+                <div style="display:flex;align-items:flex-start;gap:0.75rem;">
+                    <span class="step-badge">3</span>
+                    <div class="step-text">
+                        <strong>Create a Fine-Grained PAT</strong> (scoped to your repo only)<br>
+                        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank">Create token</a> &rarr;
+                        Repository access: <strong>Only select repositories</strong> &rarr; Select your repo &rarr;
+                        Permissions: <strong>Contents: R&W</strong>, <strong>Secrets: R&W</strong>, <strong>Actions: R&W</strong>
                     </div>
                 </div>
             </div>
-            <p class="mt-4 text-xs text-gray-500">✅ Done? Now fill in the form below to start saving tweets!</p>
+            <p style="margin-top:1.25rem;font-size:0.75rem;color:var(--text-muted);">Setup complete? Fill in the configuration below to start saving tweets.</p>
         </section>
 
-        <!-- Setup Section -->
-        <section class="bg-white rounded-xl shadow-lg p-6 mb-6">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">⚙️ Your Configuration</h2>
-            <p class="text-gray-600 mb-4">Credentials are stored <strong>only in your browser</strong> (localStorage) and never sent to any server.</p>
-            
-            <div class="space-y-4">
+        <!-- ── Configuration ── -->
+        <section class="glass-card anim-2">
+            <h2 class="section-title">
+                <span class="section-icon icon-cyan">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                </span>
+                Vault Configuration
+            </h2>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:1.5rem;">
+                Credentials are stored <strong style="color:var(--text-secondary);">only in your browser</strong> (localStorage) and never sent to any server.
+            </p>
+
+            <div style="display:flex;flex-direction:column;gap:1.25rem;">
                 <!-- GitHub Repository -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                    <label class="vault-label">
                         GitHub Repository
-                        <span class="text-gray-400 font-normal">(owner/repo format)</span>
+                        <span style="font-weight:400;text-transform:none;letter-spacing:normal;color:var(--text-muted);">(owner/repo)</span>
                     </label>
-                    <input type="text" id="github-repo" placeholder="username/my-tweets" 
-                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                    <p class="text-xs text-gray-500 mt-1">Example: johndoe/saved-tweets</p>
+                    <input type="text" id="github-repo" placeholder="username/my-tweets" class="vault-input">
+                    <p class="vault-hint">Example: johndoe/saved-tweets</p>
                 </div>
 
                 <!-- GitHub PAT -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">
-                        GitHub Personal Access Token (Fine-Grained)
-                        <a href="https://github.com/settings/personal-access-tokens/new" 
-                           target="_blank" class="text-purple-600 hover:underline ml-2">Create one →</a>
+                    <label class="vault-label">
+                        GitHub Personal Access Token
+                        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank">Create one &rarr;</a>
                     </label>
-                    <input type="password" id="github-pat" placeholder="github_pat_xxxxxxxxxxxx" 
-                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                    <p class="text-xs text-gray-500 mt-1">
-                        <strong>Recommended:</strong> Create a fine-grained token scoped to ONLY your GetIt repository.<br>
-                        Permissions needed: Contents (Read & Write), Secrets (Read & Write), Actions (Read & Write)
+                    <input type="password" id="github-pat" placeholder="github_pat_xxxxxxxxxxxx" class="vault-input">
+                    <p class="vault-hint">
+                        <strong>Recommended:</strong> Fine-grained token scoped to ONLY your GetIt repository.<br>
+                        Permissions: Contents (R&W), Secrets (R&W), Actions (R&W)
                     </p>
                 </div>
 
                 <!-- Twitter API Key -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                    <label class="vault-label">
                         TwitterAPI.io API Key
-                        <a href="https://twitterapi.io/dashboard" target="_blank" class="text-purple-600 hover:underline ml-2">Get one →</a>
+                        <a href="https://twitterapi.io/dashboard" target="_blank">Get one &rarr;</a>
                     </label>
-                    <input type="password" id="twitter-api-key" placeholder="your-twitterapi-io-key" 
-                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                    <p class="text-xs text-gray-500 mt-1">From twitterapi.io dashboard (~$0.15 per 1000 tweets)</p>
+                    <input type="password" id="twitter-api-key" placeholder="your-twitterapi-io-key" class="vault-input">
+                    <p class="vault-hint">From twitterapi.io dashboard (~$0.15 per 1000 tweets)</p>
                 </div>
 
-                <div class="flex gap-3 flex-wrap">
-                    <button onclick="saveConfig()" 
-                        class="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-6 rounded-lg transition-colors">
-                        💾 Save to Browser
+                <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.25rem;">
+                    <button onclick="saveConfig()" class="btn-vault btn-primary">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                        Save to Browser
                     </button>
-                    <button onclick="saveTwitterKeyAsSecret()" id="secret-btn"
-                        class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-lg transition-colors">
-                        🔐 Save Twitter Key to GitHub Secret
+                    <button onclick="saveTwitterKeyAsSecret()" id="secret-btn" class="btn-vault btn-secondary">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        Save Key to GitHub Secret
                     </button>
                 </div>
-                
-                <div id="secret-status" class="hidden text-sm mt-2 p-2 bg-gray-50 rounded-lg"></div>
-                <div id="config-status" class="hidden text-sm mt-2"></div>
+
+                <div id="secret-status" class="hidden status-msg status-info"></div>
+                <div id="config-status" class="hidden status-msg"></div>
             </div>
         </section>
 
-        <!-- Save Tweet Section -->
-        <section class="bg-white rounded-xl shadow-lg p-6 mb-6">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">📥 Save a Tweet</h2>
-            
-            <div class="space-y-4">
+        <!-- ── Save a Tweet ── -->
+        <section class="glass-card anim-3">
+            <h2 class="section-title">
+                <span class="section-icon icon-amber">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </span>
+                Save a Tweet
+            </h2>
+
+            <div style="display:flex;flex-direction:column;gap:1rem;">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Tweet URL</label>
-                    <input type="text" id="tweet-url" placeholder="https://x.com/username/status/1234567890" 
-                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                    <p class="text-xs text-gray-500 mt-1">Supports twitter.com and x.com URLs</p>
+                    <label class="vault-label">Tweet URL</label>
+                    <input type="text" id="tweet-url" placeholder="https://x.com/username/status/1234567890" class="vault-input">
+                    <p class="vault-hint">Supports twitter.com and x.com URLs</p>
                 </div>
 
-                <button onclick="saveTweet()" id="save-btn"
-                    class="bg-green-600 hover:bg-green-700 text-white font-medium py-3 px-8 rounded-lg transition-colors flex items-center justify-center gap-2">
-                    <span>🚀 Save Tweet to Repository</span>
+                <button onclick="saveTweet()" id="save-btn" class="btn-vault btn-action" style="align-self:flex-start;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+                    Save to Repository
                 </button>
-                
-                <div id="save-status" class="hidden rounded-lg p-4 mt-4"></div>
+
+                <div id="save-status" class="hidden status-msg"></div>
             </div>
         </section>
 
-        <!-- How It Works -->
-        <section class="bg-white rounded-xl shadow-lg p-6">
-            <h2 class="text-xl font-semibold text-gray-800 mb-4">🔍 How It Works</h2>
-            <div class="space-y-3 text-gray-600">
-                <div class="flex items-start gap-3">
-                    <span class="bg-purple-100 text-purple-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-medium">1</span>
-                    <p>Your credentials are stored <strong>only in your browser's localStorage</strong> - never sent to any server.</p>
+        <!-- ── How It Works ── -->
+        <section class="glass-card anim-4">
+            <h2 class="section-title">
+                <span class="section-icon icon-green">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                </span>
+                How It Works
+            </h2>
+            <div style="display:flex;flex-direction:column;gap:0.25rem;">
+                <div class="flow-step">
+                    <span class="flow-badge">1</span>
+                    <p class="flow-text">Your credentials are stored <strong>only in your browser's localStorage</strong> &mdash; never sent to any server.</p>
                 </div>
-                <div class="flex items-start gap-3">
-                    <span class="bg-purple-100 text-purple-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-medium">2</span>
-                    <p>When you save a tweet, this page triggers a <strong>GitHub Action</strong> in your repository.</p>
+                <div class="flow-step">
+                    <span class="flow-badge">2</span>
+                    <p class="flow-text">When you save a tweet, this page triggers a <strong>GitHub Action</strong> in your repository.</p>
                 </div>
-                <div class="flex items-start gap-3">
-                    <span class="bg-purple-100 text-purple-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-medium">3</span>
-                    <p>The GitHub Action fetches the tweet using <strong>twitterapi.io</strong> and creates a markdown file.</p>
+                <div class="flow-step">
+                    <span class="flow-badge">3</span>
+                    <p class="flow-text">The Action fetches the tweet via <strong>twitterapi.io</strong> and generates a structured markdown file.</p>
                 </div>
-                <div class="flex items-start gap-3">
-                    <span class="bg-purple-100 text-purple-700 rounded-full w-6 h-6 flex items-center justify-center text-sm font-medium">4</span>
-                    <p>The markdown file is committed to your repository's <code class="bg-gray-100 px-1 rounded">tweets/</code> folder.</p>
+                <div class="flow-step">
+                    <span class="flow-badge">4</span>
+                    <p class="flow-text">The markdown is committed to your repository's <code>tweets/</code> folder &mdash; saved for future reference.</p>
                 </div>
             </div>
         </section>
 
-        <!-- Privacy Notice -->
-        <div class="mt-6 text-center text-sm text-gray-500">
-            <p>🔒 <strong>Privacy First:</strong> This page runs entirely in your browser. No data is sent to any third-party server.</p>
-            <p class="mt-1">Your tokens are stored in localStorage and used only to communicate with GitHub's API.</p>
+        <!-- ── Privacy ── -->
+        <div class="privacy-bar anim-5">
+            <div class="shield">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Privacy First
+            </div>
+            <p>This page runs entirely in your browser. No data is sent to any third-party server.</p>
+            <p style="margin-top:0.25rem;">Your tokens are stored in localStorage and used only to communicate with GitHub's API.</p>
         </div>
-    </main>
 
-    <!-- Footer -->
-    <footer class="text-center py-6 text-gray-500 text-sm">
-        <p>GetIt is open source. <a href="https://github.com/kvk-code/getit" class="text-purple-600 hover:underline">View on GitHub</a></p>
-    </footer>
+        <!-- ── Footer ── -->
+        <footer class="vault-footer anim-6">
+            <p>GetIt is open source. <a href="https://github.com/kvk-code/getit">View on GitHub</a></p>
+        </footer>
+    </div>
 
     <script>
-        // Encrypt and create GitHub secret using libsodium
+        // ── Theme toggle ──
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            const moonIcon = document.querySelector('.icon-moon');
+            const sunIcon = document.querySelector('.icon-sun');
+            if (moonIcon && sunIcon) {
+                if (theme === 'light') {
+                    moonIcon.style.display = 'none';
+                    sunIcon.style.display = 'block';
+                } else {
+                    moonIcon.style.display = 'block';
+                    sunIcon.style.display = 'none';
+                }
+            }
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme') || 'dark';
+            const next = current === 'dark' ? 'light' : 'dark';
+            applyTheme(next);
+            localStorage.setItem('getit_theme', next);
+        }
+
+        // Apply saved theme immediately (before DOM renders)
+        (function() {
+            const saved = localStorage.getItem('getit_theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', saved);
+        })();
+
+        // ── Encrypt and create GitHub secret using libsodium ──
         async function encryptSecret(publicKey, secretValue) {
             await sodium.ready;
-            
-            // Decode the base64 public key
             const publicKeyBytes = sodium.from_base64(publicKey, sodium.base64_variants.ORIGINAL);
-            
-            // Convert secret to bytes
             const secretBytes = sodium.from_string(secretValue);
-            
-            // Encrypt using sealed box
             const encryptedBytes = sodium.crypto_box_seal(secretBytes, publicKeyBytes);
-            
-            // Return as base64
             return sodium.to_base64(encryptedBytes, sodium.base64_variants.ORIGINAL);
         }
 
-        // Check if TWITTER_API_KEY secret already exists
+        // ── Check if TWITTER_API_KEY secret already exists ──
         async function checkSecretExists(repo, pat) {
             try {
                 const response = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/TWITTER_API_KEY`, {
@@ -208,61 +980,60 @@
             }
         }
 
-        // Check secret status when repo/pat changes
+        // ── Check secret status when repo/pat changes ──
         async function checkAndUpdateSecretStatus() {
             const repo = document.getElementById('github-repo').value.trim();
             const pat = document.getElementById('github-pat').value.trim();
             const secretBtn = document.getElementById('secret-btn');
             const secretStatus = document.getElementById('secret-status');
-            
+
             if (!repo || !pat || !repo.includes('/')) {
                 secretStatus.classList.add('hidden');
-                secretBtn.innerHTML = '🔐 Save Twitter Key to GitHub Secret';
+                secretBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Save Key to GitHub Secret';
                 return;
             }
-            
+
             try {
                 const exists = await checkSecretExists(repo, pat);
                 if (exists) {
-                    secretStatus.innerHTML = '✅ <span class="text-green-700">TWITTER_API_KEY secret already exists in this repository</span>';
-                    secretStatus.classList.remove('hidden');
-                    secretBtn.innerHTML = '🔄 Update Twitter Key Secret';
+                    secretStatus.innerHTML = '<span style="color:#6ee7b7;">TWITTER_API_KEY secret already exists in this repository</span>';
+                    secretStatus.className = 'status-msg status-success';
+                    secretBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Update Twitter Key Secret';
                 } else {
-                    secretStatus.innerHTML = '⚠️ <span class="text-yellow-700">TWITTER_API_KEY secret not found - click button to create it</span>';
-                    secretStatus.classList.remove('hidden');
-                    secretBtn.innerHTML = '🔐 Save Twitter Key to GitHub Secret';
+                    secretStatus.innerHTML = '<span style="color:#fbbf24;">TWITTER_API_KEY secret not found &mdash; click button to create it</span>';
+                    secretStatus.className = 'status-msg status-info';
+                    secretBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Save Key to GitHub Secret';
                 }
             } catch {
                 secretStatus.classList.add('hidden');
             }
         }
 
+        // ── Save Twitter API key as GitHub secret ──
         async function saveTwitterKeyAsSecret() {
             const repo = document.getElementById('github-repo').value.trim();
             const pat = document.getElementById('github-pat').value.trim();
             const twitterKey = document.getElementById('twitter-api-key').value.trim();
-            
+
             if (!repo || !pat || !twitterKey) {
-                showStatus('config-status', '❌ Please fill in all fields first', 'error');
+                showStatus('config-status', 'Please fill in all fields first', 'error');
                 return;
             }
-            
+
             if (!repo.includes('/')) {
-                showStatus('config-status', '❌ Repository must be in owner/repo format', 'error');
+                showStatus('config-status', 'Repository must be in owner/repo format', 'error');
                 return;
             }
-            
-            // Check if secret already exists
+
             const secretExists = await checkSecretExists(repo, pat);
-            
+
             const btn = document.getElementById('secret-btn');
             btn.disabled = true;
-            btn.innerHTML = secretExists 
-                ? '<span class="animate-pulse">⏳ Updating secret...</span>'
-                : '<span class="animate-pulse">⏳ Creating secret...</span>';
-            
+            btn.innerHTML = secretExists
+                ? '<span style="opacity:0.7;">Updating secret...</span>'
+                : '<span style="opacity:0.7;">Creating secret...</span>';
+
             try {
-                // Step 1: Get the repository's public key for secrets
                 const keyResponse = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/public-key`, {
                     headers: {
                         'Accept': 'application/vnd.github+json',
@@ -270,7 +1041,7 @@
                         'X-GitHub-Api-Version': '2022-11-28'
                     }
                 });
-                
+
                 if (!keyResponse.ok) {
                     const error = await keyResponse.json().catch(() => ({}));
                     if (keyResponse.status === 403) {
@@ -278,13 +1049,10 @@
                     }
                     throw new Error(error.message || 'Failed to get public key');
                 }
-                
+
                 const { key: publicKey, key_id: keyId } = await keyResponse.json();
-                
-                // Step 2: Encrypt the secret using libsodium
                 const encryptedValue = await encryptSecret(publicKey, twitterKey);
-                
-                // Step 3: Create or update the secret
+
                 const secretResponse = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/TWITTER_API_KEY`, {
                     method: 'PUT',
                     headers: {
@@ -298,123 +1066,118 @@
                         key_id: keyId
                     })
                 });
-                
+
                 if (secretResponse.status === 201 || secretResponse.status === 204) {
-                    // Also save to localStorage
                     localStorage.setItem('getit_repo', repo);
                     localStorage.setItem('getit_pat', pat);
                     localStorage.setItem('getit_twitter_key', twitterKey);
-                    
+
                     const action = secretResponse.status === 201 ? 'created' : 'updated';
-                    showStatus('config-status', `
-                        ✅ <strong>Twitter API Key ${action} successfully!</strong><br>
-                        <span class="text-sm">The secret TWITTER_API_KEY has been securely ${action} in your repository.</span>
-                    `, 'success');
-                    
-                    // Update the secret status indicator
+                    showStatus('config-status', `<strong>Twitter API Key ${action} successfully.</strong><br><span style="font-size:0.75rem;">The secret TWITTER_API_KEY has been securely ${action} in your repository.</span>`, 'success');
                     await checkAndUpdateSecretStatus();
                 } else {
                     const error = await secretResponse.json().catch(() => ({}));
                     throw new Error(error.message || 'Failed to create secret');
                 }
             } catch (error) {
-                showStatus('config-status', `❌ ${error.message}`, 'error');
+                showStatus('config-status', error.message, 'error');
             } finally {
                 btn.disabled = false;
                 const stillExists = await checkSecretExists(repo, pat);
-                btn.innerHTML = stillExists ? '🔄 Update Twitter Key Secret' : '🔐 Save Twitter Key to GitHub Secret';
+                if (stillExists) {
+                    btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Update Twitter Key Secret';
+                } else {
+                    btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Save Key to GitHub Secret';
+                }
             }
         }
 
-        // Load saved config on page load
+        // ── Load saved config on page load ──
         document.addEventListener('DOMContentLoaded', async () => {
+            // Apply theme icons on load
+            const savedTheme = localStorage.getItem('getit_theme') || 'dark';
+            applyTheme(savedTheme);
+
             const repo = localStorage.getItem('getit_repo');
             const pat = localStorage.getItem('getit_pat');
             const twitterKey = localStorage.getItem('getit_twitter_key');
-            
+
             if (repo) document.getElementById('github-repo').value = repo;
             if (pat) document.getElementById('github-pat').value = pat;
             if (twitterKey) document.getElementById('twitter-api-key').value = twitterKey;
-            
+
             if (repo && pat && twitterKey) {
-                showStatus('config-status', '✅ Configuration loaded from browser storage', 'success');
+                showStatus('config-status', 'Configuration loaded from browser storage', 'success');
             }
-            
-            // Check secret status on page load
+
             if (repo && pat) {
                 await checkAndUpdateSecretStatus();
             }
-            
-            // Add event listeners to check secret status when repo/pat changes
+
             const repoInput = document.getElementById('github-repo');
             const patInput = document.getElementById('github-pat');
-            
+
             let debounceTimer;
             const debouncedCheck = () => {
                 clearTimeout(debounceTimer);
                 debounceTimer = setTimeout(() => checkAndUpdateSecretStatus(), 500);
             };
-            
+
             repoInput.addEventListener('blur', debouncedCheck);
             patInput.addEventListener('blur', debouncedCheck);
         });
 
+        // ── Save config to localStorage ──
         function saveConfig() {
             const repo = document.getElementById('github-repo').value.trim();
             const pat = document.getElementById('github-pat').value.trim();
             const twitterKey = document.getElementById('twitter-api-key').value.trim();
-            
+
             if (!repo || !pat || !twitterKey) {
-                showStatus('config-status', '❌ Please fill in all fields', 'error');
+                showStatus('config-status', 'Please fill in all fields', 'error');
                 return;
             }
-            
-            // Validate repo format
+
             if (!repo.includes('/')) {
-                showStatus('config-status', '❌ Repository must be in owner/repo format', 'error');
+                showStatus('config-status', 'Repository must be in owner/repo format', 'error');
                 return;
             }
-            
+
             localStorage.setItem('getit_repo', repo);
             localStorage.setItem('getit_pat', pat);
             localStorage.setItem('getit_twitter_key', twitterKey);
-            
-            showStatus('config-status', '✅ Configuration saved to browser storage!', 'success');
+
+            showStatus('config-status', 'Configuration saved to browser storage.', 'success');
         }
 
+        // ── Save tweet via GitHub Action ──
         async function saveTweet() {
             const tweetUrl = document.getElementById('tweet-url').value.trim();
             const repo = localStorage.getItem('getit_repo');
             const pat = localStorage.getItem('getit_pat');
             const twitterKey = localStorage.getItem('getit_twitter_key');
-            
-            // Validation
+
             if (!repo || !pat || !twitterKey) {
-                showStatus('save-status', '❌ Please configure your credentials first (Setup section above)', 'error');
+                showStatus('save-status', 'Please configure your credentials first (Configuration section above)', 'error');
                 return;
             }
-            
+
             if (!tweetUrl) {
-                showStatus('save-status', '❌ Please enter a tweet URL', 'error');
+                showStatus('save-status', 'Please enter a tweet URL', 'error');
                 return;
             }
-            
-            // Validate tweet URL format
+
             const tweetIdMatch = tweetUrl.match(/status\/(\d+)/);
             if (!tweetIdMatch) {
-                showStatus('save-status', '❌ Invalid tweet URL. Must contain /status/[tweet_id]', 'error');
+                showStatus('save-status', 'Invalid tweet URL. Must contain /status/[tweet_id]', 'error');
                 return;
             }
-            
+
             const btn = document.getElementById('save-btn');
             btn.disabled = true;
-            btn.innerHTML = '<span class="animate-pulse">⏳ Triggering GitHub Action...</span>';
-            
+            btn.innerHTML = '<span style="opacity:0.7;">Triggering GitHub Action...</span>';
+
             try {
-                // First, we need to ensure the Twitter API key is set as a secret
-                // For now, we'll pass it via client_payload (the workflow will use repository secret)
-                
-                // Trigger repository_dispatch
                 const response = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
                     method: 'POST',
                     headers: {
@@ -430,50 +1193,35 @@
                         }
                     })
                 });
-                
+
                 if (response.status === 204 || response.status === 200) {
-                    showStatus('save-status', `
-                        ✅ <strong>GitHub Action triggered successfully!</strong><br>
-                        <span class="text-sm">
-                            The tweet is being processed. Check your repository's 
-                            <a href="https://github.com/${repo}/actions" target="_blank" class="text-purple-600 hover:underline">Actions tab</a> 
-                            for progress.
-                        </span>
-                    `, 'success');
+                    showStatus('save-status', `<strong>GitHub Action triggered successfully.</strong><br><span style="font-size:0.75rem;">Your tweet is being saved. Check your repository's <a href="https://github.com/${repo}/actions" target="_blank">Actions tab</a> for progress.</span>`, 'success');
                     document.getElementById('tweet-url').value = '';
                 } else if (response.status === 404) {
-                    showStatus('save-status', `
-                        ❌ <strong>Repository not found or workflow missing</strong><br>
-                        <span class="text-sm">
-                            Make sure:<br>
-                            1. The repository "${repo}" exists<br>
-                            2. You've added the workflow file (.github/workflows/save-tweet.yml)<br>
-                            3. Your fine-grained PAT has 'Contents: Read & Write' permission for this repo
-                        </span>
-                    `, 'error');
+                    showStatus('save-status', `<strong>Repository not found or workflow missing</strong><br><span style="font-size:0.75rem;">Verify:<br>1. The repository "${repo}" exists<br>2. The workflow file (.github/workflows/save-tweet.yml) is present<br>3. Your PAT has 'Contents: Read & Write' permission</span>`, 'error');
                 } else if (response.status === 401) {
-                    showStatus('save-status', '❌ Authentication failed. Check your GitHub PAT.', 'error');
+                    showStatus('save-status', 'Authentication failed. Check your GitHub PAT.', 'error');
                 } else {
                     const errorData = await response.json().catch(() => ({}));
-                    showStatus('save-status', `❌ Error: ${errorData.message || response.statusText}`, 'error');
+                    showStatus('save-status', `Error: ${errorData.message || response.statusText}`, 'error');
                 }
             } catch (error) {
-                showStatus('save-status', `❌ Network error: ${error.message}`, 'error');
+                showStatus('save-status', `Network error: ${error.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = '<span>🚀 Save Tweet to Repository</span>';
+                btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg> Save to Repository';
             }
         }
 
+        // ── Show status message ──
         function showStatus(elementId, message, type) {
             const el = document.getElementById(elementId);
             el.innerHTML = message;
-            el.className = `rounded-lg p-4 mt-2 text-sm ${
-                type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : 
-                type === 'error' ? 'bg-red-50 text-red-800 border border-red-200' : 
-                'bg-gray-50 text-gray-800'
+            el.className = `status-msg ${
+                type === 'success' ? 'status-success' :
+                type === 'error' ? 'status-error' :
+                'status-info'
             }`;
-            el.classList.remove('hidden');
         }
     </script>
 </body>

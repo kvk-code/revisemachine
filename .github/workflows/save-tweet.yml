@@ -38,6 +38,52 @@ jobs:
           fi
           echo "Processing: $TWEET_URL"
           node scripts/process_tweet.js
+          
+          # Capture the generated filename for title generation
+          GENERATED_FILE=$(ls -t tweets/*.md | head -1)
+          echo "generated_file=$GENERATED_FILE" >> $GITHUB_OUTPUT
+          echo "Generated: $GENERATED_FILE"
+
+      - name: Setup Python for Title Generation
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python Dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install transformers accelerate
+
+      - name: Generate Smart Title
+        id: title
+        run: |
+          GENERATED_FILE="${{ steps.archive.outputs.generated_file }}"
+          if [ -z "$GENERATED_FILE" ] || [ ! -f "$GENERATED_FILE" ]; then
+            echo "No file to rename"
+            echo "new_filename=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Generating title for: $GENERATED_FILE"
+          SMART_SLUG=$(python scripts/generate_title.py "$GENERATED_FILE")
+          echo "Smart slug: $SMART_SLUG"
+          
+          # Extract date and tweet ID from current filename
+          BASENAME=$(basename "$GENERATED_FILE" .md)
+          DATE_PREFIX=$(echo "$BASENAME" | grep -oP '^\d{4}-\d{2}-\d{2}')
+          TWEET_ID=$(echo "$BASENAME" | grep -oP '\d{15,}$')
+          
+          # Build new filename
+          NEW_FILENAME="tweets/${DATE_PREFIX}-${SMART_SLUG}-${TWEET_ID}.md"
+          
+          if [ "$GENERATED_FILE" != "$NEW_FILENAME" ]; then
+            echo "Renaming: $GENERATED_FILE -> $NEW_FILENAME"
+            mv "$GENERATED_FILE" "$NEW_FILENAME"
+            echo "new_filename=$NEW_FILENAME" >> $GITHUB_OUTPUT
+          else
+            echo "Filename unchanged"
+            echo "new_filename=" >> $GITHUB_OUTPUT
+          fi
 
       - name: Commit and Push
         run: |

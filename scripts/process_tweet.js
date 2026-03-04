@@ -122,6 +122,19 @@ function processText(text, entities, extendedEntities) {
   return out.trim();
 }
 
+function generateSlug(text, maxLength = 60) {
+  if (!text) return 'untitled';
+  
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '') // Remove special chars except spaces and hyphens
+    .trim()
+    .replace(/\s+/g, '-')         // Replace spaces with hyphens
+    .replace(/-+/g, '-')          // Collapse multiple hyphens
+    .substring(0, maxLength)      // Limit length
+    .replace(/-+$/, '');          // Remove trailing hyphens
+}
+
 // ─── Media Handling ─────────────────────────────────────────────────────────
 
 async function downloadMedia(tweet, mediaDir) {
@@ -472,7 +485,10 @@ async function main() {
 
   // ── Generate Markdown ──
 
-  const filename = `tweets/${datePrefix}-${tweetId}.md`;
+  // Generate human-friendly slug from tweet text
+  const firstTweetText = allTweets[0].text || '';
+  const slug = generateSlug(firstTweetText, 50);
+  const filename = `tweets/${datePrefix}-${slug}-${tweetId}.md`;
   const totalMedia = tweetDataList.reduce((sum, d) => sum + d.mediaFiles.length, 0);
 
   let md = `---

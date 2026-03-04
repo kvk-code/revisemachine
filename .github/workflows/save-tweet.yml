@@ -88,6 +88,10 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+          
+          # Pull latest changes to avoid conflicts from concurrent runs
+          git pull --rebase origin master || true
+          
           git add tweets/
           if git diff --cached --quiet; then
             echo "No changes to commit"
@@ -99,5 +103,7 @@ jobs:
             fi
             TWEET_ID=$(echo "$TWEET_URL" | grep -oP '(?<=status/)\d+')
             git commit -m "Archive tweet ${TWEET_ID}"
-            git push
+            
+            # Retry push with pull if it fails (handles race conditions)
+            git push || (git pull --rebase origin master && git push)
           fi

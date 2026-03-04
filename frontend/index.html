@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GetIt — Save Tweets for the Future</title>
+    <title>ReviseMachine — Save Tweets for the Future</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/dist/modules/libsodium-wrappers.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -743,7 +743,7 @@
         <header class="vault-header scanline-accent">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;">
                 <div>
-                    <div class="vault-brand">GetIt</div>
+                    <div class="vault-brand">ReviseMachine</div>
                     <p class="vault-tagline">
                         <span>Tweet Archive</span> &mdash; Save tweets to your GitHub repository as writing you can revisit anytime
                     </p>
@@ -769,8 +769,8 @@
                 <div style="display:flex;align-items:flex-start;gap:0.75rem;">
                     <span class="step-badge">1</span>
                     <div class="step-text">
-                        <strong>Create your own copy of GetIt</strong><br>
-                        <a href="https://github.com/kvk-code/getit" target="_blank">Go to GetIt repo</a> &rarr; Click <strong>"Use this template"</strong> &rarr; Name it (e.g., <code>my-saved-tweets</code>) &rarr; Set to <strong>Private</strong>
+                        <strong>Create your own copy of ReviseMachine</strong><br>
+                        <a href="https://github.com/kvk-code/getit" target="_blank">Go to ReviseMachine repo</a> &rarr; Click <strong>"Use this template"</strong> &rarr; Name it (e.g., <code>my-saved-tweets</code>) &rarr; Set to <strong>Private</strong>
                     </div>
                 </div>
                 <div style="display:flex;align-items:flex-start;gap:0.75rem;">
@@ -825,7 +825,7 @@
                     </label>
                     <input type="password" id="github-pat" placeholder="github_pat_xxxxxxxxxxxx" class="vault-input">
                     <p class="vault-hint">
-                        <strong>Recommended:</strong> Fine-grained token scoped to ONLY your GetIt repository.<br>
+                        <strong>Recommended:</strong> Fine-grained token scoped to ONLY your ReviseMachine repository.<br>
                         Permissions: Contents (R&W), Secrets (R&W), Actions (R&W)
                     </p>
                 </div>
@@ -921,7 +921,7 @@
 
         <!-- ── Footer ── -->
         <footer class="vault-footer anim-6">
-            <p>GetIt is open source. <a href="https://github.com/kvk-code/getit">View on GitHub</a></p>
+            <p>ReviseMachine is open source. <a href="https://github.com/kvk-code/getit">View on GitHub</a></p>
         </footer>
     </div>
 
@@ -946,12 +946,12 @@
             const current = document.documentElement.getAttribute('data-theme') || 'dark';
             const next = current === 'dark' ? 'light' : 'dark';
             applyTheme(next);
-            localStorage.setItem('getit_theme', next);
+            localStorage.setItem('revisemachine_theme', next);
         }
 
         // Apply saved theme immediately (before DOM renders)
         (function() {
-            const saved = localStorage.getItem('getit_theme') || 'dark';
+            const saved = localStorage.getItem('revisemachine_theme') || 'dark';
             document.documentElement.setAttribute('data-theme', saved);
         })();
 
@@ -1068,9 +1068,9 @@
                 });
 
                 if (secretResponse.status === 201 || secretResponse.status === 204) {
-                    localStorage.setItem('getit_repo', repo);
-                    localStorage.setItem('getit_pat', pat);
-                    localStorage.setItem('getit_twitter_key', twitterKey);
+                    localStorage.setItem('revisemachine_repo', repo);
+                    localStorage.setItem('revisemachine_pat', pat);
+                    localStorage.setItem('revisemachine_twitter_key', twitterKey);
 
                     const action = secretResponse.status === 201 ? 'created' : 'updated';
                     showStatus('config-status', `<strong>Twitter API Key ${action} successfully.</strong><br><span style="font-size:0.75rem;">The secret TWITTER_API_KEY has been securely ${action} in your repository.</span>`, 'success');
@@ -1095,12 +1095,12 @@
         // ── Load saved config on page load ──
         document.addEventListener('DOMContentLoaded', async () => {
             // Apply theme icons on load
-            const savedTheme = localStorage.getItem('getit_theme') || 'dark';
+            const savedTheme = localStorage.getItem('revisemachine_theme') || 'dark';
             applyTheme(savedTheme);
 
-            const repo = localStorage.getItem('getit_repo');
-            const pat = localStorage.getItem('getit_pat');
-            const twitterKey = localStorage.getItem('getit_twitter_key');
+            const repo = localStorage.getItem('revisemachine_repo');
+            const pat = localStorage.getItem('revisemachine_pat');
+            const twitterKey = localStorage.getItem('revisemachine_twitter_key');
 
             if (repo) document.getElementById('github-repo').value = repo;
             if (pat) document.getElementById('github-pat').value = pat;
@@ -1143,9 +1143,9 @@
                 return;
             }
 
-            localStorage.setItem('getit_repo', repo);
-            localStorage.setItem('getit_pat', pat);
-            localStorage.setItem('getit_twitter_key', twitterKey);
+            localStorage.setItem('revisemachine_repo', repo);
+            localStorage.setItem('revisemachine_pat', pat);
+            localStorage.setItem('revisemachine_twitter_key', twitterKey);
 
             showStatus('config-status', 'Configuration saved to browser storage.', 'success');
         }
@@ -1153,9 +1153,9 @@
         // ── Save tweet via GitHub Action ──
         async function saveTweet() {
             const tweetUrl = document.getElementById('tweet-url').value.trim();
-            const repo = localStorage.getItem('getit_repo');
-            const pat = localStorage.getItem('getit_pat');
-            const twitterKey = localStorage.getItem('getit_twitter_key');
+            const repo = localStorage.getItem('revisemachine_repo');
+            const pat = localStorage.getItem('revisemachine_pat');
+            const twitterKey = localStorage.getItem('revisemachine_twitter_key');
 
             if (!repo || !pat || !twitterKey) {
                 showStatus('save-status', 'Please configure your credentials first (Configuration section above)', 'error');

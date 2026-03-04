@@ -1,4 +1,4 @@
-# 🐦 GetIt - Save Tweets to Your GitHub Repository
+# ReviseMachine - Save Tweets to Your GitHub Repository
 
 A fully decentralized, self-hosted solution to save tweets as markdown files in your GitHub repository.
 
@@ -36,10 +36,10 @@ A fully decentralized, self-hosted solution to save tweets as markdown files in 
 **This is more secure than account-wide tokens!**
 
 1. Go to [GitHub Fine-Grained Tokens](https://github.com/settings/personal-access-tokens/new)
-2. **Token name**: `GetIt - my-saved-tweets` (or your repo name)
+2. **Token name**: `ReviseMachine - my-saved-tweets` (or your repo name)
 3. **Expiration**: Choose your preference (90 days recommended)
 4. **Repository access**: Select **"Only select repositories"**
-5. **Select your GetIt repository** from the dropdown
+5. **Select your ReviseMachine repository** from the dropdown
 6. **Permissions** → **Repository permissions**:
    - **Contents**: Read and write
    - **Secrets**: Read and write (for automatic secret creation)
@@ -47,7 +47,7 @@ A fully decentralized, self-hosted solution to save tweets as markdown files in 
    - **Metadata**: Read-only (auto-selected)
 7. Click **Generate token** and copy it
 
-> ⚠️ **Security Note**: This token can ONLY access your GetIt repository, not your other repos!
+> ⚠️ **Security Note**: This token can ONLY access your ReviseMachine repository, not your other repos!
 
 ### 4. Use the Frontend to Save Twitter API Key
 
@@ -161,7 +161,7 @@ You can also trigger the workflow directly from GitHub:
 
 ## 🔐 Security Notes
 
-- **Fine-Grained PAT**: We recommend using a repository-scoped token that can ONLY access your GetIt repo, not your other repositories.
+- **Fine-Grained PAT**: We recommend using a repository-scoped token that can ONLY access your ReviseMachine repo, not your other repositories.
 - **GitHub PAT**: Stored only in your browser's localStorage. Never transmitted to any server except GitHub's API.
 - **Twitter API Key**: Stored as a GitHub Secret. Only accessible by your GitHub Actions.
 - **No Backend**: This project has no server component. Everything runs in your browser or GitHub Actions.

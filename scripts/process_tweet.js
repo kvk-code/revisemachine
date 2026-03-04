@@ -200,14 +200,14 @@ async function downloadProfilePic(tweet, mediaDir) {
 async function fetchThreadTweets(tweet) {
   const authorUsername = tweet.author.userName;
   const conversationId = tweet.conversationId || tweet.id;
-  const allThreadTweets = [];
+  const allCandidates = [];
 
-  // Use Advanced Search: "from:author conversation_id:id" finds all author tweets in the thread
+  // Use Advanced Search: "from:author conversation_id:id" finds all author tweets in the conversation
   const query = `from:${authorUsername} conversation_id:${conversationId}`;
   console.log(`  Searching thread with: ${query}`);
   let cursor = null;
   let pages = 0;
-  const maxPages = 10;
+  const maxPages = 3;
 
   do {
     try {
@@ -216,32 +216,91 @@ async function fetchThreadTweets(tweet) {
       const tweets = data.tweets || [];
 
       for (const tw of tweets) {
-        allThreadTweets.push(tw);
+        allCandidates.push(tw);
       }
 
       cursor = data.has_next_page ? data.next_cursor : null;
       pages++;
-      console.log(`  Page ${pages}: ${tweets.length} tweets found, ${allThreadTweets.length} total from @${authorUsername}`);
+      console.log(`  Page ${pages}: ${tweets.length} tweets found, ${allCandidates.length} total candidates from @${authorUsername}`);
     } catch (e) {
       console.error(`  Error searching thread: ${e.message}`);
       break;
     }
   } while (cursor && pages < maxPages);
 
-  // Sort by ID (chronological)
-  allThreadTweets.sort((a, b) => {
+  // ── Filter to self-reply chain using inReplyToId ──
+  // The broad search returns ALL author tweets in the conversation, but a
+  // thread is only the chain of self-replies (each tweet replying to the
+  // author's own previous tweet). Without this filter, an author who replies
+  // to many different people in a conversation would have all those replies
+  // incorrectly treated as thread tweets.
+
+  // Build a map of all candidate tweets (include the original tweet)
+  const tweetMap = new Map();
+  tweetMap.set(tweet.id, tweet);
+  for (const tw of allCandidates) {
+    tweetMap.set(tw.id, tw);
+  }
+
+  // Check if inReplyToId data is available for chain-walking
+  const hasReplyInfo = allCandidates.some(tw => tw.inReplyToId);
+
+  if (hasReplyInfo) {
+    // Build parent → children map (same-author children only)
+    const childrenOf = new Map();
+    for (const [, tw] of tweetMap) {
+      if (tw.inReplyToId && tw.author && tw.author.userName === authorUsername) {
+        if (!childrenOf.has(tw.inReplyToId)) childrenOf.set(tw.inReplyToId, []);
+        childrenOf.get(tw.inReplyToId).push(tw);
+      }
+    }
+
+    // Walk backward from the submitted tweet to find the thread start
+    let start = tweet;
+    const backVisited = new Set();
+    while (start.inReplyToId && tweetMap.has(start.inReplyToId) && !backVisited.has(start.inReplyToId)) {
+      const parent = tweetMap.get(start.inReplyToId);
+      if (parent.author && parent.author.userName === authorUsername) {
+        backVisited.add(start.id);
+        start = parent;
+      } else {
+        break;
+      }
+    }
+
+    // Walk forward from the thread start, following self-replies
+    const chain = [start];
+    const fwdVisited = new Set([start.id]);
+    let current = start;
+    const maxChain = 50;
+
+    while (chain.length < maxChain) {
+      const children = childrenOf.get(current.id) || [];
+      const selfReply = children.find(c => !fwdVisited.has(c.id));
+      if (!selfReply) break;
+      chain.push(selfReply);
+      fwdVisited.add(selfReply.id);
+      current = selfReply;
+    }
+
+    console.log(`  Self-reply chain: ${chain.length} tweets (filtered from ${allCandidates.length} candidates)`);
+    return chain;
+  }
+
+  // Fallback: inReplyToId not available — return all but capped and sorted
+  console.log(`  Warning: inReplyToId not available, returning all ${allCandidates.length} candidates`);
+  allCandidates.sort((a, b) => {
     if (a.id < b.id) return -1;
     if (a.id > b.id) return 1;
     return 0;
   });
 
-  // Deduplicate
   const seen = new Set();
-  return allThreadTweets.filter(t => {
+  return allCandidates.filter(t => {
     if (seen.has(t.id)) return false;
     seen.add(t.id);
     return true;
-  });
+  }).slice(0, 50);
 }
 
 // ─── Markdown Generation ────────────────────────────────────────────────────
@@ -376,16 +435,13 @@ async function main() {
   let allTweets = [tweet];
   let isThread = false;
 
-  // Check for thread: fetch replies and look for same-author tweets
-  if (isConversationRoot && (tweet.replyCount > 0 || tweet.quoteCount > 0)) {
+  // Check for thread: fetch replies and look for same-author self-reply chain
+  if (isConversationRoot && tweet.replyCount > 0) {
     console.log('Checking for thread (same-author replies)...');
     const threadTweets = await fetchThreadTweets(tweet);
-    // If we found additional tweets from the same author, it's a thread
-    const additional = threadTweets.filter(t => t.id !== tweet.id);
-    if (additional.length > 0) {
+    if (threadTweets.length > 1) {
       isThread = true;
-      // Ensure root tweet is first
-      allTweets = [tweet, ...additional];
+      allTweets = threadTweets;
       console.log(`Thread detected: ${allTweets.length} tweets from @${tweet.author.userName}`);
     }
   } else if (!isConversationRoot) {

@@ -1,6 +1,6 @@
 # ReviseMachine - Save Tweets to Your GitHub Repository
 
-A fully decentralized, self-hosted solution to save tweets as markdown files in your GitHub repository.
+A fully decentralized, self-hosted, open-source solution to save tweets as markdown files in your GitHub repository.
 
 ## ✨ Features
 

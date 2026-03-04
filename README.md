@@ -172,6 +172,25 @@ You can also trigger the workflow directly from GitHub:
 - **No Backend**: The self-hosted version has no server component. Everything runs in your browser or GitHub Actions.
 - **Private Repository**: Make your copy private to keep your saved tweets visible only to you.
 
+## ⚠️ Google Analytics Tag
+
+The frontend files (`frontend/index.html` and `frontend/interest.html`) include a Google Analytics tag for the original ReviseMachine project. **When you clone this template, you should remove or replace this tag** to avoid sending analytics data to the original project owner.
+
+**To remove:** Delete the following lines from the `<head>` section of both HTML files:
+
+```html
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-C4WZQDC7BM"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-C4WZQDC7BM');
+</script>
+```
+
+**To replace:** Change `G-C4WZQDC7BM` to your own Google Analytics Measurement ID.
+
 ## 📄 Example Output
 
 When you save a tweet, it creates a file like `tweets/2024-01-15-1234567890.md`:

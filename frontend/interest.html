@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ReviseMachine — Expression of Interest</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.13/dist/modules/libsodium-wrappers.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        /* ── CSS Custom Properties ── */
+        :root {
+            --bg-deep: #06070a;
+            --bg-card: rgba(10, 14, 26, 0.75);
+            --bg-card-hover: rgba(14, 20, 38, 0.85);
+            --border-glow: rgba(0, 229, 255, 0.15);
+            --border-glow-hover: rgba(0, 229, 255, 0.35);
+            --cyan: #00e5ff;
+            --cyan-dim: #00a5b8;
+            --violet: #7c5cfc;
+            --violet-dim: #5a3fd4;
+            --amber: #f59e0b;
+            --red: #ef4444;
+            --green: #10b981;
+            --text-primary: #e0e6f0;
+            --text-secondary: #8892a8;
+            --text-muted: #4a5268;
+            --input-bg: rgba(6, 8, 16, 0.6);
+            --input-border: rgba(0, 229, 255, 0.12);
+            --input-focus: rgba(0, 229, 255, 0.4);
+        }
+
+        /* ── Light theme overrides ── */
+        [data-theme="light"] {
+            --bg-deep: #f0f2f7;
+            --bg-card: rgba(255, 255, 255, 0.85);
+            --bg-card-hover: rgba(255, 255, 255, 0.95);
+            --border-glow: rgba(100, 120, 160, 0.15);
+            --border-glow-hover: rgba(0, 180, 220, 0.3);
+            --cyan: #0097a7;
+            --cyan-dim: #00838f;
+            --violet: #5e35b1;
+            --violet-dim: #4527a0;
+            --amber: #e65100;
+            --text-primary: #1a1d2e;
+            --text-secondary: #4a5068;
+            --text-muted: #8890a4;
+            --input-bg: rgba(255, 255, 255, 0.7);
+            --input-border: rgba(100, 120, 160, 0.2);
+            --input-focus: rgba(0, 151, 167, 0.4);
+            --grid-color: rgba(100, 120, 160, 0.06);
+            --glow-radial: rgba(0, 151, 167, 0.04);
+            --glow-radial2: rgba(94, 53, 177, 0.02);
+        }
+
+        :root {
+            --grid-color: rgba(0, 229, 255, 0.03);
+            --glow-radial: rgba(0, 229, 255, 0.06);
+            --glow-radial2: rgba(124, 92, 252, 0.03);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'IBM Plex Mono', monospace;
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            position: relative;
+            transition: background 0.4s ease, color 0.4s ease;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(var(--grid-color) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+            background-size: 60px 60px;
+            animation: gridDrift 20s linear infinite;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            top: -20%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120vw;
+            height: 60vh;
+            background: radial-gradient(ellipse at center, var(--glow-radial) 0%, var(--glow-radial2) 40%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        @keyframes gridDrift {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(60px, 60px); }
+        }
+
+        .noise-overlay {
+            position: fixed;
+            inset: 0;
+            opacity: 0.025;
+            pointer-events: none;
+            z-index: 1;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            background-repeat: repeat;
+            background-size: 256px 256px;
+        }
+
+        .vault-container {
+            position: relative;
+            z-index: 2;
+            max-width: 56rem;
+            margin: 0 auto;
+            padding: 0 1.25rem;
+        }
+
+        /* ── Header ── */
+        .vault-header {
+            padding: 2.5rem 0 1.5rem;
+            border-bottom: 1px solid rgba(0, 229, 255, 0.08);
+            margin-bottom: 2rem;
+            animation: fadeSlideDown 0.8s ease-out both;
+        }
+
+        .vault-brand {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 800;
+            font-size: 2.25rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            background: linear-gradient(135deg, var(--cyan) 0%, var(--violet) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            display: inline-block;
+            position: relative;
+            text-decoration: none;
+        }
+
+        .vault-brand::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, var(--cyan), var(--violet), transparent);
+            opacity: 0.5;
+        }
+
+        .vault-tagline {
+            font-family: 'Syne', sans-serif;
+            font-weight: 400;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+            letter-spacing: 0.05em;
+        }
+
+        .vault-tagline span {
+            color: var(--cyan);
+            font-weight: 600;
+        }
+
+        /* ── Glass Cards ── */
+        .glass-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-glow);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 1.75rem;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            transition: border-color 0.4s ease, box-shadow 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.2), rgba(124, 92, 252, 0.2), transparent);
+        }
+
+        .glass-card:hover {
+            border-color: var(--border-glow-hover);
+            box-shadow: 0 0 40px rgba(0, 229, 255, 0.04), inset 0 0 40px rgba(0, 229, 255, 0.01);
+        }
+
+        /* ── Section titles ── */
+        .section-title {
+            font-family: 'Syne', sans-serif;
+            font-weight: 700;
+            font-size: 1.25rem;
+            letter-spacing: 0.04em;
+            color: var(--text-primary);
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .section-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+        }
+
+        .icon-cyan { background: rgba(0, 229, 255, 0.1); border: 1px solid rgba(0, 229, 255, 0.2); color: var(--cyan); }
+        .icon-violet { background: rgba(124, 92, 252, 0.1); border: 1px solid rgba(124, 92, 252, 0.2); color: var(--violet); }
+        .icon-amber { background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); color: var(--amber); }
+        .icon-green { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); color: var(--green); }
+
+        /* ── Inputs ── */
+        .vault-input, .vault-textarea {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 10px;
+            color: var(--text-primary);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.875rem;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+
+        .vault-textarea {
+            resize: vertical;
+            min-height: 100px;
+            line-height: 1.6;
+        }
+
+        .vault-input::placeholder, .vault-textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .vault-input:focus, .vault-textarea:focus {
+            border-color: var(--input-focus);
+            box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.08), 0 0 20px rgba(0, 229, 255, 0.05);
+        }
+
+        /* ── Labels ── */
+        .vault-label {
+            display: block;
+            font-family: 'Syne', sans-serif;
+            font-weight: 600;
+            font-size: 0.8rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .vault-hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.35rem;
+            line-height: 1.5;
+        }
+
+        /* ── Buttons ── */
+        .btn-vault {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.7rem 1.5rem;
+            border: none;
+            border-radius: 10px;
+            font-family: 'Syne', sans-serif;
+            font-weight: 600;
+            font-size: 0.85rem;
+            letter-spacing: 0.04em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--cyan-dim), var(--cyan));
+            color: #06070a;
+        }
+        .btn-primary:hover {
+            box-shadow: 0 0 30px rgba(0, 229, 255, 0.3), 0 0 60px rgba(0, 229, 255, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .btn-action {
+            background: linear-gradient(135deg, #d97706, var(--amber));
+            color: #06070a;
+            padding: 0.85rem 2rem;
+            font-size: 0.9rem;
+        }
+        .btn-action:hover {
+            box-shadow: 0 0 30px rgba(245, 158, 11, 0.3), 0 0 60px rgba(245, 158, 11, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .btn-vault:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        /* ── Pricing option buttons ── */
+        .price-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+
+        .price-option {
+            position: relative;
+            cursor: pointer;
+        }
+
+        .price-option input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .price-option label {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 0.75rem 1.25rem;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            min-width: 90px;
+        }
+
+        .price-option label .price-amount {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: var(--text-primary);
+        }
+
+        .price-option label .price-period {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: 0.15rem;
+        }
+
+        .price-option input[type="radio"]:checked + label {
+            border-color: var(--cyan);
+            background: rgba(0, 229, 255, 0.08);
+            box-shadow: 0 0 20px rgba(0, 229, 255, 0.1);
+        }
+
+        .price-option input[type="radio"]:checked + label .price-amount {
+            color: var(--cyan);
+        }
+
+        .price-option label:hover {
+            border-color: var(--border-glow-hover);
+        }
+
+        /* ── Status messages ── */
+        .status-msg {
+            border-radius: 10px;
+            padding: 1rem 1.25rem;
+            margin-top: 0.75rem;
+            font-size: 0.8rem;
+            line-height: 1.6;
+            border: 1px solid;
+        }
+
+        .status-success {
+            background: rgba(16, 185, 129, 0.08);
+            border-color: rgba(16, 185, 129, 0.2);
+            color: #6ee7b7;
+        }
+
+        .status-error {
+            background: rgba(239, 68, 68, 0.08);
+            border-color: rgba(239, 68, 68, 0.2);
+            color: #fca5a5;
+        }
+
+        .hidden { display: none; }
+
+        /* ── Back link ── */
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-family: 'Syne', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.2s;
+            letter-spacing: 0.03em;
+        }
+
+        .back-link:hover {
+            color: var(--cyan);
+        }
+
+        .back-link svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        /* ── Privacy bar ── */
+        .privacy-bar {
+            text-align: center;
+            padding: 1.5rem 0;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            border-top: 1px solid rgba(0, 229, 255, 0.05);
+            margin-top: 1rem;
+        }
+
+        .privacy-bar .shield {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            background: rgba(0, 229, 255, 0.05);
+            border: 1px solid rgba(0, 229, 255, 0.1);
+            border-radius: 20px;
+            padding: 0.35rem 0.9rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+        }
+
+        .privacy-bar .shield svg {
+            width: 14px;
+            height: 14px;
+            color: var(--cyan);
+        }
+
+        /* ── Footer ── */
+        .vault-footer {
+            text-align: center;
+            padding: 1.5rem 0 2.5rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .vault-footer a {
+            color: var(--violet);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .vault-footer a:hover {
+            color: #a78bfa;
+            text-decoration: underline;
+        }
+
+        /* ── Theme toggle ── */
+        .theme-toggle {
+            position: relative;
+            width: 52px;
+            height: 28px;
+            border-radius: 14px;
+            border: 1px solid var(--border-glow);
+            background: var(--input-bg);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            padding: 0 3px;
+            flex-shrink: 0;
+        }
+
+        .theme-toggle:hover {
+            border-color: var(--border-glow-hover);
+        }
+
+        .theme-toggle .toggle-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--cyan);
+            transition: transform 0.3s ease, background 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .theme-toggle .toggle-thumb svg {
+            width: 12px;
+            height: 12px;
+            color: var(--bg-deep);
+        }
+
+        [data-theme="light"] .theme-toggle .toggle-thumb {
+            transform: translateX(24px);
+            background: var(--violet);
+        }
+
+        /* ── Animations ── */
+        @keyframes fadeSlideDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fadeSlideUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .anim-1 { animation: fadeSlideUp 0.7s ease-out 0.15s both; }
+        .anim-2 { animation: fadeSlideUp 0.7s ease-out 0.3s both; }
+        .anim-3 { animation: fadeSlideUp 0.7s ease-out 0.45s both; }
+
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 20px rgba(245, 158, 11, 0.15); }
+            50% { box-shadow: 0 0 35px rgba(245, 158, 11, 0.25), 0 0 60px rgba(245, 158, 11, 0.08); }
+        }
+
+        .btn-action { animation: pulseGlow 3s ease-in-out infinite; }
+        .btn-action:hover { animation: none; }
+
+        .scanline-accent { position: relative; overflow: hidden; }
+
+        .scanline-accent::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.03), transparent);
+            animation: scanline 6s linear infinite;
+        }
+
+        @keyframes scanline {
+            0% { left: -50%; }
+            100% { left: 150%; }
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 640px) {
+            .vault-brand { font-size: 1.5rem; }
+            .glass-card { padding: 1.25rem; }
+            .btn-vault { padding: 0.6rem 1rem; font-size: 0.8rem; }
+            .price-options { gap: 0.5rem; }
+            .price-option label { padding: 0.6rem 0.9rem; min-width: 75px; }
+        }
+
+        /* ── Light theme overrides ── */
+        [data-theme="light"] .glass-card::before {
+            background: linear-gradient(90deg, transparent, rgba(0, 151, 167, 0.15), rgba(94, 53, 177, 0.15), transparent);
+        }
+        [data-theme="light"] .glass-card:hover { box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06); }
+        [data-theme="light"] .glass-card { backdrop-filter: blur(12px); }
+        [data-theme="light"] .noise-overlay { opacity: 0.01; }
+        [data-theme="light"] .vault-header { border-bottom-color: rgba(100, 120, 160, 0.12); }
+        [data-theme="light"] .icon-cyan { background: rgba(0, 151, 167, 0.08); border-color: rgba(0, 151, 167, 0.2); }
+        [data-theme="light"] .icon-violet { background: rgba(94, 53, 177, 0.08); border-color: rgba(94, 53, 177, 0.2); }
+        [data-theme="light"] .icon-amber { background: rgba(230, 81, 0, 0.08); border-color: rgba(230, 81, 0, 0.2); }
+        [data-theme="light"] .icon-green { background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.2); }
+        [data-theme="light"] .status-success { color: #065f46; }
+        [data-theme="light"] .status-error { color: #991b1b; }
+        [data-theme="light"] .btn-primary { color: #ffffff; }
+        [data-theme="light"] .btn-action { color: #ffffff; }
+        [data-theme="light"] .privacy-bar { border-top-color: rgba(100, 120, 160, 0.1); }
+        [data-theme="light"] .privacy-bar .shield { background: rgba(0, 151, 167, 0.05); border-color: rgba(0, 151, 167, 0.12); }
+        [data-theme="light"] .scanline-accent::after { background: linear-gradient(90deg, transparent, rgba(0, 151, 167, 0.04), transparent); }
+        [data-theme="light"] .price-option input[type="radio"]:checked + label {
+            border-color: var(--cyan);
+            background: rgba(0, 151, 167, 0.08);
+        }
+    </style>
+</head>
+<body>
+    <div class="noise-overlay"></div>
+
+    <div class="vault-container">
+        <!-- ── Header ── -->
+        <header class="vault-header scanline-accent">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;">
+                <div>
+                    <a href="index.html" class="vault-brand" style="text-decoration:none;">ReviseMachine</a>
+                    <p class="vault-tagline">
+                        <span>Hosted Solution</span> &mdash; Expression of Interest
+                    </p>
+                </div>
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle light / dark theme" aria-label="Toggle theme">
+                    <div class="toggle-thumb">
+                        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                    </div>
+                </button>
+            </div>
+        </header>
+
+        <!-- ── Back link ── -->
+        <a href="index.html" class="back-link" style="margin-bottom:1.5rem;display:inline-flex;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            Back to ReviseMachine
+        </a>
+
+        <!-- ── Intro ── -->
+        <section class="glass-card anim-1" style="border-color: rgba(124, 92, 252, 0.15);">
+            <h2 class="section-title">
+                <span class="section-icon icon-violet">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                </span>
+                Interested in a Hosted Solution?
+            </h2>
+            <p style="font-size:0.85rem;color:var(--text-secondary);line-height:1.7;">
+                ReviseMachine currently works as a <strong style="color:var(--text-primary);">bring-your-own-key</strong> tool &mdash; you supply your own GitHub PAT and Twitter API key. 
+                We're exploring a <strong style="color:var(--text-primary);">fully hosted version</strong> where you simply log in and start saving tweets, with no setup required.
+            </p>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin-top:0.75rem;">
+                Fill out this form to help us shape the hosted offering. Your input directly influences what we build.
+            </p>
+        </section>
+
+        <!-- ── Form ── -->
+        <section class="glass-card anim-2">
+            <h2 class="section-title">
+                <span class="section-icon icon-cyan">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </span>
+                Your Details
+            </h2>
+
+            <form id="interest-form" style="display:flex;flex-direction:column;gap:1.5rem;">
+                <!-- Name -->
+                <div>
+                    <label class="vault-label" for="eoi-name">Your Name</label>
+                    <input type="text" id="eoi-name" name="name" placeholder="Jane Doe" class="vault-input" required>
+                </div>
+
+                <!-- Profession -->
+                <div>
+                    <label class="vault-label" for="eoi-profession">Profession / Role</label>
+                    <input type="text" id="eoi-profession" name="profession" placeholder="Researcher, Journalist, Developer, Student..." class="vault-input" required>
+                    <p class="vault-hint">What do you do? This helps us understand our audience.</p>
+                </div>
+
+                <!-- Expectations -->
+                <div>
+                    <label class="vault-label" for="eoi-expectations">What do you expect from a hosted service?</label>
+                    <textarea id="eoi-expectations" name="expectations" class="vault-textarea" placeholder="e.g., One-click tweet archiving without API keys, team sharing, search across saved tweets, scheduled archiving of specific accounts..." required></textarea>
+                    <p class="vault-hint">Describe features, workflows, or pain points you'd want addressed.</p>
+                </div>
+
+                <!-- Pricing -->
+                <div>
+                    <label class="vault-label">Monthly subscription you'd consider</label>
+                    <div class="price-options">
+                        <div class="price-option">
+                            <input type="radio" name="pricing" id="price-free" value="Free">
+                            <label for="price-free">
+                                <span class="price-amount">Free</span>
+                                <span class="price-period">limited</span>
+                            </label>
+                        </div>
+                        <div class="price-option">
+                            <input type="radio" name="pricing" id="price-5" value="$5">
+                            <label for="price-5">
+                                <span class="price-amount">$5</span>
+                                <span class="price-period">/month</span>
+                            </label>
+                        </div>
+                        <div class="price-option">
+                            <input type="radio" name="pricing" id="price-10" value="$10" checked>
+                            <label for="price-10">
+                                <span class="price-amount">$10</span>
+                                <span class="price-period">/month</span>
+                            </label>
+                        </div>
+                        <div class="price-option">
+                            <input type="radio" name="pricing" id="price-20" value="$20">
+                            <label for="price-20">
+                                <span class="price-amount">$20</span>
+                                <span class="price-period">/month</span>
+                            </label>
+                        </div>
+                        <div class="price-option">
+                            <input type="radio" name="pricing" id="price-other" value="Other">
+                            <label for="price-other">
+                                <span class="price-amount">Other</span>
+                                <span class="price-period">specify</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="custom-price-wrap" class="hidden" style="margin-top:0.75rem;">
+                        <input type="text" id="eoi-custom-price" placeholder="Your preferred amount" class="vault-input" style="max-width:250px;">
+                    </div>
+                </div>
+
+                <!-- Email -->
+                <div>
+                    <label class="vault-label" for="eoi-email">
+                        Email
+                        <span style="font-weight:400;text-transform:none;letter-spacing:normal;color:var(--text-muted);">(for launch notification)</span>
+                    </label>
+                    <input type="email" id="eoi-email" name="email" placeholder="you@example.com" class="vault-input" required>
+                </div>
+
+                <!-- Submit -->
+                <button type="submit" id="submit-btn" class="btn-vault btn-action" style="align-self:flex-start;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    Submit Interest
+                </button>
+
+                <div id="form-status" class="hidden status-msg"></div>
+            </form>
+        </section>
+
+        <!-- ── What happens next ── -->
+        <section class="glass-card anim-3">
+            <h2 class="section-title">
+                <span class="section-icon icon-green">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                </span>
+                What Happens Next
+            </h2>
+            <div style="display:flex;flex-direction:column;gap:0.75rem;">
+                <p style="font-size:0.85rem;color:var(--text-secondary);line-height:1.7;">
+                    Your response helps us gauge demand and prioritize features. Once we have enough interest, we'll build and launch the hosted version. 
+                    If you provided your email, we'll notify you when it's ready.
+                </p>
+                <p style="font-size:0.8rem;color:var(--text-muted);">
+                    The self-hosted (bring-your-own-key) version remains free and open source regardless.
+                </p>
+            </div>
+        </section>
+
+        <!-- ── Privacy ── -->
+        <div class="privacy-bar anim-3">
+            <div class="shield">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Privacy First
+            </div>
+            <p>Your submission is end-to-end encrypted (libsodium sealed box) and stored on IPFS. No tracking, no analytics. Only the site owner can decrypt it.</p>
+        </div>
+
+        <!-- ── Footer ── -->
+        <footer class="vault-footer">
+            <p>ReviseMachine is open source. <a href="https://github.com/kvk-code/revisemachine">View on GitHub</a></p>
+        </footer>
+    </div>
+
+    <script>
+        // ══════════════════════════════════════════════════
+        //  Encrypted Form Submissions
+        //  Uses libsodium crypto_box_seal (sealed box)
+        //  Only the server's private key can decrypt these
+        // ══════════════════════════════════════════════════
+
+        // ── YOUR PUBLIC KEY (generated by generate-keys.sh) ──
+        // Replace this with your actual public key hex string
+        const OWNER_PUBLIC_KEY_HEX = 'REPLACE_WITH_YOUR_PUBLIC_KEY';
+
+        // ── Theme toggle ──
+        function applyTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            const moonIcon = document.querySelector('.icon-moon');
+            const sunIcon = document.querySelector('.icon-sun');
+            if (moonIcon && sunIcon) {
+                if (theme === 'light') {
+                    moonIcon.style.display = 'none';
+                    sunIcon.style.display = 'block';
+                } else {
+                    moonIcon.style.display = 'block';
+                    sunIcon.style.display = 'none';
+                }
+            }
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme') || 'dark';
+            const next = current === 'dark' ? 'light' : 'dark';
+            applyTheme(next);
+            try { localStorage.setItem('revisemachine_theme', next); } catch(e) {}
+        }
+
+        // Apply saved theme
+        (function() {
+            let saved = 'dark';
+            try { saved = localStorage.getItem('revisemachine_theme') || 'dark'; } catch(e) {}
+            document.documentElement.setAttribute('data-theme', saved);
+        })();
+
+        document.addEventListener('DOMContentLoaded', () => {
+            let saved = 'dark';
+            try { saved = localStorage.getItem('revisemachine_theme') || 'dark'; } catch(e) {}
+            applyTheme(saved);
+        });
+
+        // ── Show/hide custom price field ──
+        document.querySelectorAll('input[name="pricing"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                const wrap = document.getElementById('custom-price-wrap');
+                if (radio.value === 'Other' && radio.checked) {
+                    wrap.classList.remove('hidden');
+                } else {
+                    wrap.classList.add('hidden');
+                }
+            });
+        });
+
+        // ── Encrypt and submit to IPFS ──
+        async function encryptAndSubmit(data) {
+            await sodium.ready;
+
+            // Serialize form data to JSON
+            const plaintext = JSON.stringify(data);
+
+            // Encrypt with owner's public key using sealed box
+            // Only the owner's private key can decrypt this
+            const publicKeyBytes = sodium.from_hex(OWNER_PUBLIC_KEY_HEX);
+            const ciphertextBytes = sodium.crypto_box_seal(
+                sodium.from_string(plaintext),
+                publicKeyBytes
+            );
+
+            // Encode as base64 for transport
+            const ciphertextB64 = sodium.to_base64(
+                ciphertextBytes,
+                sodium.base64_variants.ORIGINAL
+            );
+
+            // Create an envelope with metadata (unencrypted) + encrypted payload
+            const envelope = {
+                version: 1,
+                type: 'eoi-submission',
+                encrypted: ciphertextB64,
+                timestamp: new Date().toISOString()
+            };
+
+            // POST to the /submit endpoint (Caddy proxies to Kubo API)
+            const formData = new FormData();
+            const blob = new Blob(
+                [JSON.stringify(envelope)],
+                { type: 'application/octet-stream' }
+            );
+            formData.append('file', blob, `eoi-${Date.now()}.enc.json`);
+
+            const response = await fetch('/submit', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+
+            const result = await response.json();
+            return result;
+        }
+
+        // ── Form submission ──
+        document.getElementById('interest-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const btn = document.getElementById('submit-btn');
+            const statusEl = document.getElementById('form-status');
+            btn.disabled = true;
+            btn.innerHTML = '<span style="opacity:0.7;">Encrypting &amp; submitting...</span>';
+
+            const name = document.getElementById('eoi-name').value.trim();
+            const profession = document.getElementById('eoi-profession').value.trim();
+            const expectations = document.getElementById('eoi-expectations').value.trim();
+            const email = document.getElementById('eoi-email').value.trim();
+            const pricingRadio = document.querySelector('input[name="pricing"]:checked');
+            let pricing = pricingRadio ? pricingRadio.value : 'Not specified';
+            if (pricing === 'Other') {
+                const custom = document.getElementById('eoi-custom-price').value.trim();
+                pricing = custom ? 'Other: ' + custom : 'Other (not specified)';
+            }
+
+            const submission = {
+                name,
+                profession,
+                expectations,
+                pricing,
+                email,
+                submitted_at: new Date().toISOString()
+            };
+
+            try {
+                const result = await encryptAndSubmit(submission);
+
+                statusEl.innerHTML = '<strong>Thank you for your interest!</strong><br>'
+                    + '<span style="font-size:0.75rem;">Your response has been encrypted and stored on IPFS.<br>'
+                    + 'Only the site owner can read it. CID: <code style="background:rgba(0,229,255,0.08);padding:0.1rem 0.3rem;border-radius:3px;font-size:0.7rem;">'
+                    + (result.Hash || 'stored') + '</code></span>';
+                statusEl.className = 'status-msg status-success';
+
+                document.getElementById('interest-form').reset();
+            } catch (err) {
+                statusEl.innerHTML = '<strong>Submission failed</strong><br>'
+                    + '<span style="font-size:0.75rem;">' + err.message + '</span>';
+                statusEl.className = 'status-msg status-error';
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Submit Interest';
+            }
+        });
+    </script>
+</body>
+</html>

@@ -4,14 +4,16 @@ A fully decentralized, self-hosted, open-source solution to save tweets as markd
 
 ## ✨ Features
 
-- **🔒 Privacy First**: All credentials stored locally in your browser - never sent to any server
-- **🌐 IPFS Ready**: Static frontend can be hosted on IPFS for censorship resistance
-- **📝 Markdown Output**: Tweets saved as clean markdown with full metadata
-- **� Thread Support**: Automatically detects and archives all tweets in a thread by the same author
-- **📰 Article Support**: Extracts full content from X/Twitter articles (not just the link)
-- **🎬 Media Downloads**: Downloads images, videos, and thumbnails to your repository
-- **� GitHub Actions**: Processing happens in your own GitHub repository
-- **💰 Cost Effective**: Uses twitterapi.io (~$0.15 per 1000 tweets)
+- **Privacy First**: All credentials stored locally in your browser - never sent to any server
+- **IPFS Ready**: Static frontend can be hosted on IPFS for censorship resistance
+- **Markdown Output**: Tweets saved as clean markdown with full metadata
+- **Thread Support**: Automatically detects and archives all tweets in a thread by the same author
+- **Article Support**: Extracts full content from X/Twitter articles (not just the link)
+- **Media Downloads**: Downloads images, videos, and thumbnails to your repository
+- **GitHub Actions**: Processing happens in your own GitHub repository
+- **Cost Effective**: Uses twitterapi.io (~$0.15 per 1000 tweets)
+- **Dark/Light Theme**: Futuristic cybernetic design with a theme toggle that persists across sessions
+- **Hosted Version Interest Form**: Optional encrypted expression-of-interest form for users who want a managed hosted solution
 
 ## 🚀 Quick Start
 
@@ -74,16 +76,18 @@ Now you can paste any tweet URL and save it!
 ## 📁 Project Structure
 
 ```
-getit/
+revisemachine/
 ├── .github/
 │   └── workflows/
 │       └── save-tweet.yml    # GitHub Action that fetches and saves tweets
 ├── frontend/
-│   └── index.html            # Static frontend (IPFS-ready)
+│   ├── index.html            # Static frontend (IPFS-ready, futuristic dark theme)
+│   └── interest.html         # Expression-of-interest form (encrypted submissions)
 ├── scripts/
 │   └── process_tweet.js      # Tweet processing logic (threads, articles, media)
 ├── tweets/                   # Your saved tweets will appear here
 │   └── media/                # Downloaded images and videos
+├── LICENSE
 └── README.md
 ```
 
@@ -159,12 +163,13 @@ You can also trigger the workflow directly from GitHub:
 4. Enter the tweet URL
 5. Click "Run workflow"
 
-## 🔐 Security Notes
+## Security Notes
 
 - **Fine-Grained PAT**: We recommend using a repository-scoped token that can ONLY access your ReviseMachine repo, not your other repositories.
 - **GitHub PAT**: Stored only in your browser's localStorage. Never transmitted to any server except GitHub's API.
 - **Twitter API Key**: Stored as a GitHub Secret. Only accessible by your GitHub Actions.
-- **No Backend**: This project has no server component. Everything runs in your browser or GitHub Actions.
+- **Interest Form Encryption**: The expression-of-interest form encrypts all data client-side using `libsodium crypto_box_seal` (X25519 sealed box) before submission. The server never sees plaintext form data.
+- **No Backend**: The self-hosted version has no server component. Everything runs in your browser or GitHub Actions.
 - **Private Repository**: Make your copy private to keep your saved tweets visible only to you.
 
 ## 📄 Example Output
@@ -251,4 +256,5 @@ MIT License - feel free to use this for personal or commercial projects.
 - [twitterapi.io](https://twitterapi.io) - Twitter API provider
 - [GitHub Actions](https://github.com/features/actions) - CI/CD platform
 - [IPFS](https://ipfs.io) - Decentralized storage
+- [libsodium](https://libsodium.org) - Client-side encryption
 - [Tailwind CSS](https://tailwindcss.com) - Styling

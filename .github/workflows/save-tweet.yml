@@ -68,13 +68,12 @@ jobs:
           SMART_SLUG=$(python scripts/generate_title.py "$GENERATED_FILE")
           echo "Smart slug: $SMART_SLUG"
           
-          # Extract date and tweet ID from current filename
+          # Extract author from current filename (format: authorname_slug.md)
           BASENAME=$(basename "$GENERATED_FILE" .md)
-          DATE_PREFIX=$(echo "$BASENAME" | grep -oP '^\d{4}-\d{2}-\d{2}')
-          TWEET_ID=$(echo "$BASENAME" | grep -oP '\d{15,}$')
+          AUTHOR_SLUG=$(echo "$BASENAME" | cut -d'_' -f1)
           
-          # Build new filename
-          NEW_FILENAME="tweets/${DATE_PREFIX}-${SMART_SLUG}-${TWEET_ID}.md"
+          # Build new filename: authorname_smarttitle.md
+          NEW_FILENAME="tweets/${AUTHOR_SLUG}_${SMART_SLUG}.md"
           
           if [ "$GENERATED_FILE" != "$NEW_FILENAME" ]; then
             echo "Renaming: $GENERATED_FILE -> $NEW_FILENAME"

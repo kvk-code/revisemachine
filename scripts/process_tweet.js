@@ -485,10 +485,11 @@ async function main() {
 
   // ── Generate Markdown ──
 
-  // Generate human-friendly slug from tweet text
+  // Generate human-friendly filename: authorname_slug.md
   const firstTweetText = allTweets[0].text || '';
   const slug = generateSlug(firstTweetText, 50);
-  const filename = `tweets/${datePrefix}-${slug}-${tweetId}.md`;
+  const authorSlug = generateSlug(tweet.author.userName, 20);
+  const filename = `tweets/${authorSlug}_${slug}.md`;
   const totalMedia = tweetDataList.reduce((sum, d) => sum + d.mediaFiles.length, 0);
 
   let md = `---

@@ -66,6 +66,35 @@ Paste the token into the app when prompted, or save to `x_auth_token.txt`.
 
 ---
 
+## Safari Mobile (iOS / iPhone / iPad)
+
+Unfortunately, Safari on iOS does **not** provide direct access to cookies through the browser UI. Here are your options:
+
+### Option A: Use a Desktop Browser
+The easiest method is to:
+1. Log into X.com on a desktop/laptop browser
+2. Follow the Chrome Desktop instructions above
+3. Copy the token to your phone via Notes, email, or clipboard sync
+
+### Option B: Use Chrome on iOS
+1. Install Chrome from the App Store
+2. Log into X.com in Chrome
+3. Chrome on iOS also doesn't expose cookies directly, so you'll need to use Option A
+
+### Option C: Use a JavaScript Bookmark (Advanced)
+1. In Safari, create a new bookmark with any page
+2. Edit the bookmark and replace the URL with:
+   ```
+   javascript:alert(document.cookie.match(/auth_token=([^;]+)/)?.[1]||'Not found')
+   ```
+3. Go to x.com (logged in)
+4. Tap the bookmark — it will show your auth_token in an alert
+5. Screenshot or manually copy it
+
+**Note**: iOS makes cookie access intentionally difficult for security. Desktop is recommended.
+
+---
+
 ## Alternative: Chrome Desktop (Using Address Bar)
 
 ### Quick Method:

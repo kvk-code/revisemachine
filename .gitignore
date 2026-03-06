@@ -15,3 +15,13 @@ Thumbs.db
 # Temporary files
 *.tmp
 tweet_response.json
+
+# Sensitive files
+x_cookies.json
+x_cookies.txt
+x_auth_token.txt
+
+# Debug files
+debug_*.json
+debug_*.md
+test_*.html

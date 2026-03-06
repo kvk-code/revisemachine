@@ -1,0 +1,12 @@
+{
+  "name": "getit",
+  "version": "1.0.0",
+  "description": "Tweet and article archiving tool",
+  "scripts": {
+    "process-tweet": "node scripts/process_tweet.js",
+    "install-browsers": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}

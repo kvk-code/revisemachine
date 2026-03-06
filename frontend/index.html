@@ -849,14 +849,37 @@
                     <p class="vault-hint">From twitterapi.io dashboard (~$0.15 per 1000 tweets)</p>
                 </div>
 
+                <!-- X Auth Token (for article code blocks) -->
+                <div style="border-top:1px solid var(--border-glow);padding-top:1.25rem;margin-top:0.5rem;">
+                    <label class="vault-label">
+                        X Auth Token
+                        <span style="font-weight:400;text-transform:none;letter-spacing:normal;color:var(--amber);">(Optional)</span>
+                    </label>
+                    <input type="password" id="x-auth-token" placeholder="your-x-auth-token" class="vault-input">
+                    <p class="vault-hint">
+                        Required for articles with code blocks. 
+                        <a href="#" onclick="toggleAuthTokenHelp(event)" style="color:var(--cyan);">How to get it &rarr;</a>
+                    </p>
+                    <div id="auth-token-help" class="hidden" style="margin-top:0.75rem;padding:0.75rem;background:var(--input-bg);border:1px solid var(--input-border);border-radius:6px;font-size:0.75rem;line-height:1.6;">
+                        <strong style="color:var(--text-primary);">Chrome Desktop:</strong><br>
+                        1. Go to <a href="https://x.com" target="_blank">x.com</a> (make sure you're logged in)<br>
+                        2. Press F12 → Application tab → Cookies → x.com<br>
+                        3. Find <code style="background:rgba(0,229,255,0.1);padding:0.1rem 0.3rem;border-radius:3px;">auth_token</code> and copy its Value<br><br>
+                        <strong style="color:var(--text-primary);">Chrome Mobile:</strong><br>
+                        1. Go to x.com (logged in)<br>
+                        2. ⋮ → Settings → Site settings → Cookies<br>
+                        3. Search x.com → auth_token → Copy Content
+                    </div>
+                </div>
+
                 <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.25rem;">
                     <button onclick="saveConfig()" class="btn-vault btn-primary">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                         Save to Browser
                     </button>
-                    <button onclick="saveTwitterKeyAsSecret()" id="secret-btn" class="btn-vault btn-secondary">
+                    <button onclick="saveSecretsToGitHub()" id="secret-btn" class="btn-vault btn-secondary">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                        Save Key to GitHub Secret
+                        Save Keys to GitHub Secrets
                     </button>
                 </div>
 
@@ -991,10 +1014,17 @@
             return sodium.to_base64(encryptedBytes, sodium.base64_variants.ORIGINAL);
         }
 
-        // ── Check if TWITTER_API_KEY secret already exists ──
-        async function checkSecretExists(repo, pat) {
+        // ── Toggle auth token help visibility ──
+        function toggleAuthTokenHelp(event) {
+            event.preventDefault();
+            const helpDiv = document.getElementById('auth-token-help');
+            helpDiv.classList.toggle('hidden');
+        }
+
+        // ── Check if a secret exists ──
+        async function checkSecretExists(repo, pat, secretName = 'TWITTER_API_KEY') {
             try {
-                const response = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/TWITTER_API_KEY`, {
+                const response = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/${secretName}`, {
                     headers: {
                         'Accept': 'application/vnd.github+json',
                         'Authorization': `Bearer ${pat}`,
@@ -1016,34 +1046,64 @@
 
             if (!repo || !pat || !repo.includes('/')) {
                 secretStatus.classList.add('hidden');
-                secretBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Save Key to GitHub Secret';
+                secretBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Save Keys to GitHub Secrets';
                 return;
             }
 
             try {
-                const exists = await checkSecretExists(repo, pat);
-                if (exists) {
-                    secretStatus.innerHTML = '<span style="color:#6ee7b7;">TWITTER_API_KEY secret already exists in this repository</span>';
-                    secretStatus.className = 'status-msg status-success';
-                    secretBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Update Twitter Key Secret';
+                const [twitterExists, authTokenExists] = await Promise.all([
+                    checkSecretExists(repo, pat, 'TWITTER_API_KEY'),
+                    checkSecretExists(repo, pat, 'X_AUTH_TOKEN')
+                ]);
+                
+                let statusParts = [];
+                if (twitterExists) statusParts.push('<span style="color:#6ee7b7;">✓ TWITTER_API_KEY</span>');
+                else statusParts.push('<span style="color:#fbbf24;">○ TWITTER_API_KEY</span>');
+                
+                if (authTokenExists) statusParts.push('<span style="color:#6ee7b7;">✓ X_AUTH_TOKEN</span>');
+                else statusParts.push('<span style="color:#94a3b8;">○ X_AUTH_TOKEN (optional)</span>');
+                
+                secretStatus.innerHTML = 'Secrets: ' + statusParts.join(' &nbsp;|&nbsp; ');
+                secretStatus.className = 'status-msg status-info';
+                
+                if (twitterExists || authTokenExists) {
+                    secretBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Update GitHub Secrets';
                 } else {
-                    secretStatus.innerHTML = '<span style="color:#fbbf24;">TWITTER_API_KEY secret not found &mdash; click button to create it</span>';
-                    secretStatus.className = 'status-msg status-info';
-                    secretBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Save Key to GitHub Secret';
+                    secretBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Save Keys to GitHub Secrets';
                 }
             } catch {
                 secretStatus.classList.add('hidden');
             }
         }
 
-        // ── Save Twitter API key as GitHub secret ──
-        async function saveTwitterKeyAsSecret() {
+        // ── Save a single secret to GitHub ──
+        async function saveSecretToGitHub(repo, pat, secretName, secretValue, publicKey, keyId) {
+            const encryptedValue = await encryptSecret(publicKey, secretValue);
+            const response = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/${secretName}`, {
+                method: 'PUT',
+                headers: {
+                    'Accept': 'application/vnd.github+json',
+                    'Authorization': `Bearer ${pat}`,
+                    'X-GitHub-Api-Version': '2022-11-28',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    encrypted_value: encryptedValue,
+                    key_id: keyId
+                })
+            });
+            return response.status === 201 || response.status === 204;
+        }
+
+        // ── Save all secrets to GitHub ──
+        async function saveSecretsToGitHub() {
             const repo = document.getElementById('github-repo').value.trim();
             const pat = document.getElementById('github-pat').value.trim();
             const twitterKey = document.getElementById('twitter-api-key').value.trim();
+            const xAuthToken = document.getElementById('x-auth-token').value.trim();
 
             if (!repo || !pat || !twitterKey) {
-                showStatus('config-status', 'Please fill in all fields first', 'error');
+                showStatus('config-status', 'Please fill in Repository, PAT, and Twitter API Key', 'error');
                 return;
             }
 
@@ -1052,13 +1112,9 @@
                 return;
             }
 
-            const secretExists = await checkSecretExists(repo, pat);
-
             const btn = document.getElementById('secret-btn');
             btn.disabled = true;
-            btn.innerHTML = secretExists
-                ? '<span style="opacity:0.7;">Updating secret...</span>'
-                : '<span style="opacity:0.7;">Creating secret...</span>';
+            btn.innerHTML = '<span style="opacity:0.7;">Saving secrets...</span>';
 
             try {
                 const keyResponse = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/public-key`, {
@@ -1078,44 +1134,34 @@
                 }
 
                 const { key: publicKey, key_id: keyId } = await keyResponse.json();
-                const encryptedValue = await encryptSecret(publicKey, twitterKey);
-
-                const secretResponse = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/TWITTER_API_KEY`, {
-                    method: 'PUT',
-                    headers: {
-                        'Accept': 'application/vnd.github+json',
-                        'Authorization': `Bearer ${pat}`,
-                        'X-GitHub-Api-Version': '2022-11-28',
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        encrypted_value: encryptedValue,
-                        key_id: keyId
-                    })
-                });
-
-                if (secretResponse.status === 201 || secretResponse.status === 204) {
-                    localStorage.setItem('revisemachine_repo', repo);
-                    localStorage.setItem('revisemachine_pat', pat);
-                    localStorage.setItem('revisemachine_twitter_key', twitterKey);
-
-                    const action = secretResponse.status === 201 ? 'created' : 'updated';
-                    showStatus('config-status', `<strong>Twitter API Key ${action} successfully.</strong><br><span style="font-size:0.75rem;">The secret TWITTER_API_KEY has been securely ${action} in your repository.</span>`, 'success');
-                    await checkAndUpdateSecretStatus();
-                } else {
-                    const error = await secretResponse.json().catch(() => ({}));
-                    throw new Error(error.message || 'Failed to create secret');
+                
+                // Save Twitter API Key (required)
+                const twitterSaved = await saveSecretToGitHub(repo, pat, 'TWITTER_API_KEY', twitterKey, publicKey, keyId);
+                if (!twitterSaved) throw new Error('Failed to save TWITTER_API_KEY');
+                
+                // Save X Auth Token (optional)
+                let authTokenSaved = false;
+                if (xAuthToken) {
+                    authTokenSaved = await saveSecretToGitHub(repo, pat, 'X_AUTH_TOKEN', xAuthToken, publicKey, keyId);
                 }
+
+                localStorage.setItem('revisemachine_repo', repo);
+                localStorage.setItem('revisemachine_pat', pat);
+                localStorage.setItem('revisemachine_twitter_key', twitterKey);
+                if (xAuthToken) localStorage.setItem('revisemachine_x_auth_token', xAuthToken);
+
+                let msg = '<strong>Secrets saved successfully!</strong><br><span style="font-size:0.75rem;">';
+                msg += '✓ TWITTER_API_KEY';
+                if (authTokenSaved) msg += ' &nbsp;|&nbsp; ✓ X_AUTH_TOKEN';
+                msg += '</span>';
+                
+                showStatus('config-status', msg, 'success');
+                await checkAndUpdateSecretStatus();
             } catch (error) {
                 showStatus('config-status', error.message, 'error');
             } finally {
                 btn.disabled = false;
-                const stillExists = await checkSecretExists(repo, pat);
-                if (stillExists) {
-                    btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Update Twitter Key Secret';
-                } else {
-                    btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Save Key to GitHub Secret';
-                }
+                await checkAndUpdateSecretStatus();
             }
         }
 
@@ -1128,10 +1174,12 @@
             const repo = localStorage.getItem('revisemachine_repo');
             const pat = localStorage.getItem('revisemachine_pat');
             const twitterKey = localStorage.getItem('revisemachine_twitter_key');
+            const xAuthToken = localStorage.getItem('revisemachine_x_auth_token');
 
             if (repo) document.getElementById('github-repo').value = repo;
             if (pat) document.getElementById('github-pat').value = pat;
             if (twitterKey) document.getElementById('twitter-api-key').value = twitterKey;
+            if (xAuthToken) document.getElementById('x-auth-token').value = xAuthToken;
 
             if (repo && pat && twitterKey) {
                 showStatus('config-status', 'Configuration loaded from browser storage', 'success');
@@ -1159,9 +1207,10 @@
             const repo = document.getElementById('github-repo').value.trim();
             const pat = document.getElementById('github-pat').value.trim();
             const twitterKey = document.getElementById('twitter-api-key').value.trim();
+            const xAuthToken = document.getElementById('x-auth-token').value.trim();
 
             if (!repo || !pat || !twitterKey) {
-                showStatus('config-status', 'Please fill in all fields', 'error');
+                showStatus('config-status', 'Please fill in Repository, PAT, and Twitter API Key', 'error');
                 return;
             }
 
@@ -1173,6 +1222,7 @@
             localStorage.setItem('revisemachine_repo', repo);
             localStorage.setItem('revisemachine_pat', pat);
             localStorage.setItem('revisemachine_twitter_key', twitterKey);
+            if (xAuthToken) localStorage.setItem('revisemachine_x_auth_token', xAuthToken);
 
             showStatus('config-status', 'Configuration saved to browser storage.', 'success');
         }

@@ -3,6 +3,14 @@ const https = require('https');
 const http = require('http');
 const path = require('path');
 
+// Playwright scraper for authenticated article fetching (code blocks support)
+let articleScraper = null;
+try {
+  articleScraper = require('./scrape_article');
+} catch (e) {
+  // Playwright not installed - will use API only
+}
+
 const API_KEY = process.env.TWITTER_API_KEY;
 const TWEET_URL = process.env.TWEET_URL;
 
@@ -377,7 +385,97 @@ function detectArticleUrl(tweet) {
   return null;
 }
 
-async function fetchArticleContent(tweetId) {
+// Known code language identifiers that the API may return as separate blocks
+const CODE_LANG_IDENTIFIERS = new Set([
+  'javascript', 'js', 'typescript', 'ts', 'python', 'py', 'java', 'c', 'cpp', 'c++',
+  'csharp', 'c#', 'go', 'rust', 'ruby', 'php', 'swift', 'kotlin', 'scala', 'r',
+  'sql', 'html', 'css', 'scss', 'sass', 'less', 'json', 'yaml', 'yml', 'xml',
+  'bash', 'shell', 'sh', 'zsh', 'powershell', 'ps1', 'dockerfile', 'docker',
+  'markdown', 'md', 'text', 'plaintext', 'txt', 'solidity', 'sol', 'move',
+  'graphql', 'gql', 'toml', 'ini', 'conf', 'config', 'env', 'jsx', 'tsx',
+  'vue', 'svelte', 'astro', 'prisma', 'hcl', 'terraform', 'nginx', 'apache'
+]);
+
+function isCodeLangIdentifier(text) {
+  const trimmed = (text || '').trim().toLowerCase();
+  return CODE_LANG_IDENTIFIERS.has(trimmed) || /^[a-z]{1,15}$/.test(trimmed);
+}
+
+function processArticleContents(contents) {
+  // The API returns code blocks as: [{ text: "language" }, { text: "code content" }]
+  // We need to detect this pattern and reconstruct proper markdown code blocks
+  const result = [];
+  let i = 0;
+
+  while (i < contents.length) {
+    const block = contents[i];
+    const text = (block.text || '').trim();
+    
+    if (!text) {
+      i++;
+      continue;
+    }
+
+    // Check if this looks like a standalone language identifier
+    // (short single word that matches known languages)
+    const nextBlock = contents[i + 1];
+    const nextText = nextBlock ? (nextBlock.text || '').trim() : '';
+    
+    if (isCodeLangIdentifier(text) && text.length < 20 && !text.includes(' ') && nextText) {
+      // This appears to be a code language identifier followed by code content
+      const lang = text.toLowerCase();
+      // The next block(s) might be the code content
+      // Collect subsequent blocks until we hit another language identifier or a long paragraph
+      let codeContent = nextText;
+      i += 2;
+      
+      // Check if subsequent blocks are also part of this code block
+      while (i < contents.length) {
+        const checkBlock = contents[i];
+        const checkText = (checkBlock.text || '').trim();
+        
+        // Stop if we hit another language identifier or a long paragraph-like text
+        if (!checkText || 
+            (isCodeLangIdentifier(checkText) && checkText.length < 20 && !checkText.includes(' ')) ||
+            (checkText.length > 200 && checkText.includes('. '))) {
+          break;
+        }
+        
+        // If this looks like more code (contains code-like characters), add it
+        if (checkText.includes('{') || checkText.includes('}') || 
+            checkText.includes('(') || checkText.includes(')') ||
+            checkText.includes(':') || checkText.includes('=') ||
+            checkText.startsWith('-') || checkText.startsWith('#') ||
+            /^\d+\./.test(checkText)) {
+          codeContent += '\n' + checkText;
+          i++;
+        } else {
+          break;
+        }
+      }
+      
+      result.push('```' + lang + '\n' + codeContent + '\n```');
+    } else {
+      // Regular text block
+      result.push(text);
+      i++;
+    }
+  }
+
+  return result.filter(t => t.trim().length > 0).join('\n\n');
+}
+
+function hasEmptyCodeBlocks(contents) {
+  if (!contents || !Array.isArray(contents)) return false;
+  // Count empty/whitespace-only blocks - indicates stripped code blocks
+  const emptyBlocks = contents.filter(c => {
+    const text = (c.text || '').trim();
+    return text === '' || text === ' ';
+  }).length;
+  return emptyBlocks >= 3;
+}
+
+async function fetchArticleContent(tweetId, articleUrl) {
   try {
     console.log(`  Fetching article via twitterapi.io Article API for tweet ${tweetId}...`);
     await sleep(5500); // rate limit
@@ -396,14 +494,44 @@ async function fetchArticleContent(tweetId) {
     const coverImage = article.cover_media_img_url || '';
     const contents = article.contents || [];
 
-    // Build article text from content blocks
-    const contentText = contents
-      .map(c => c.text || '')
-      .filter(t => t.trim().length > 0)
-      .join('\n\n');
+    // Check if API stripped code blocks (returns empty whitespace blocks)
+    const emptyBlockCount = contents.filter(c => (c.text || '').trim() === '' || (c.text || '').trim() === ' ').length;
+    const codeBlocksStripped = hasEmptyCodeBlocks(contents);
+    
+    if (codeBlocksStripped) {
+      console.log(`  ⚠️  Detected ${emptyBlockCount} empty blocks - code blocks likely stripped by API`);
+      
+      // Try Playwright scraper with cookies if available
+      if (articleScraper && articleUrl) {
+        console.log(`  Attempting Playwright scrape with cookies...`);
+        try {
+          const scraped = await articleScraper.scrapeArticle(articleUrl, { headless: true });
+          
+          if (scraped.needsCookies) {
+            console.log(`  ⚠️  No X cookies found. Export your cookies to x_cookies.json for full article content.`);
+          } else if (scraped.content && scraped.content.length > 100) {
+            console.log(`  ✓ Playwright scraped: "${scraped.title || title}" (${scraped.content.length} chars)`);
+            if (scraped.hasCodeBlocks) {
+              console.log(`  ✓ Code blocks successfully extracted!`);
+            }
+            return {
+              title: scraped.title || title,
+              coverImage: scraped.coverImage || coverImage,
+              content: scraped.content,
+              codeBlocksStripped: false
+            };
+          }
+        } catch (scrapeErr) {
+          console.error(`  Playwright scrape failed: ${scrapeErr.message}`);
+        }
+      }
+    }
+
+    // Build article text from content blocks with code block reconstruction
+    const contentText = processArticleContents(contents);
 
     console.log(`  Article fetched: "${title}" (${contentText.length} chars, ${contents.length} blocks)`);
-    return { title, coverImage, content: contentText || null };
+    return { title, coverImage, content: contentText || null, codeBlocksStripped };
   } catch (e) {
     console.error(`  Article API failed: ${e.message}`);
     return { title: '', coverImage: '', content: null };
@@ -541,9 +669,12 @@ saved_at: "${new Date().toISOString()}"
   if (isArticle) {
     md += `---\n\n## Article Content\n\n`;
     md += `**Article URL**: [${articleUrl}](${articleUrl})\n\n`;
-    const { title, coverImage, content } = await fetchArticleContent(tweetId);
+    const { title, coverImage, content, codeBlocksStripped } = await fetchArticleContent(tweetId, articleUrl);
     if (coverImage) md += `![Cover](${coverImage})\n\n`;
     if (title) md += `### ${title}\n\n`;
+    if (codeBlocksStripped) {
+      md += `> ⚠️ **Note**: This article contains code blocks that could not be extracted due to API limitations. Please visit the original article link above to view the complete content with code examples.\n\n`;
+    }
     if (content) {
       md += content + '\n\n';
     } else {

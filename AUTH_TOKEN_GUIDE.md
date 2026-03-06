@@ -104,7 +104,7 @@ It's typically 40 characters long.
 After saving your token, test it with:
 
 ```bash
-node scripts/scrape_article.js "https://x.com/i/article/2029411158365442048"
+node scripts/scrape_tweet.js "https://x.com/NickSpisak_/status/2029412739303494131"
 ```
 
 You should see:

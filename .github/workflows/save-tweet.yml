@@ -34,7 +34,6 @@ jobs:
       - name: Archive Tweet
         id: archive
         env:
-          TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
           X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then

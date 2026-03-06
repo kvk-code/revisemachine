@@ -2,16 +2,8 @@ const fs = require('fs');
 const https = require('https');
 const http = require('http');
 const path = require('path');
+const { scrapeTweet } = require('./scrape_tweet');
 
-// Playwright scraper for authenticated article fetching (code blocks support)
-let articleScraper = null;
-try {
-  articleScraper = require('./scrape_article');
-} catch (e) {
-  // Playwright not installed - will use API only
-}
-
-const API_KEY = process.env.TWITTER_API_KEY;
 const TWEET_URL = process.env.TWEET_URL;
 
 // ─── HTTP Helpers ───────────────────────────────────────────────────────────
@@ -56,26 +48,8 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-// ─── Twitter API Helpers ────────────────────────────────────────────────────
-
-async function fetchTweet(tweetId) {
-  const res = await httpGet(
-    `https://api.twitterapi.io/twitter/tweets?tweet_ids=${tweetId}`,
-    { 'X-API-Key': API_KEY }
-  );
-  const data = JSON.parse(res.body);
-  if (data.status !== 'success' || !data.tweets || !data.tweets.length) {
-    throw new Error(`Failed to fetch tweet ${tweetId}: ${JSON.stringify(data)}`);
-  }
-  return data.tweets[0];
-}
-
-async function advancedSearch(query, cursor = null) {
-  let url = `https://api.twitterapi.io/twitter/tweet/advanced_search?query=${encodeURIComponent(query)}`;
-  if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
-  const res = await httpGet(url, { 'X-API-Key': API_KEY });
-  return JSON.parse(res.body);
-}
+// ─── Twitter API Helpers (DEPRECATED — now using Playwright) ─────────────────
+// fetchTweet and advancedSearch removed — replaced by scrapeTweet() from scrape_tweet.js
 
 // ─── Text Processing ────────────────────────────────────────────────────────
 
@@ -217,112 +191,8 @@ async function downloadProfilePic(tweet, mediaDir) {
 }
 
 // ─── Thread Detection & Fetching ────────────────────────────────────────────
-
-async function fetchThreadTweets(tweet) {
-  const authorUsername = tweet.author.userName;
-  const conversationId = tweet.conversationId || tweet.id;
-  const allCandidates = [];
-
-  // Use Advanced Search: "from:author conversation_id:id" finds all author tweets in the conversation
-  const query = `from:${authorUsername} conversation_id:${conversationId}`;
-  console.log(`  Searching thread with: ${query}`);
-  let cursor = null;
-  let pages = 0;
-  const maxPages = 3;
-
-  do {
-    try {
-      await sleep(5500); // rate limit
-      const data = await advancedSearch(query, cursor);
-      const tweets = data.tweets || [];
-
-      for (const tw of tweets) {
-        allCandidates.push(tw);
-      }
-
-      cursor = data.has_next_page ? data.next_cursor : null;
-      pages++;
-      console.log(`  Page ${pages}: ${tweets.length} tweets found, ${allCandidates.length} total candidates from @${authorUsername}`);
-    } catch (e) {
-      console.error(`  Error searching thread: ${e.message}`);
-      break;
-    }
-  } while (cursor && pages < maxPages);
-
-  // ── Filter to self-reply chain using inReplyToId ──
-  // The broad search returns ALL author tweets in the conversation, but a
-  // thread is only the chain of self-replies (each tweet replying to the
-  // author's own previous tweet). Without this filter, an author who replies
-  // to many different people in a conversation would have all those replies
-  // incorrectly treated as thread tweets.
-
-  // Build a map of all candidate tweets (include the original tweet)
-  const tweetMap = new Map();
-  tweetMap.set(tweet.id, tweet);
-  for (const tw of allCandidates) {
-    tweetMap.set(tw.id, tw);
-  }
-
-  // Check if inReplyToId data is available for chain-walking
-  const hasReplyInfo = allCandidates.some(tw => tw.inReplyToId);
-
-  if (hasReplyInfo) {
-    // Build parent → children map (same-author children only)
-    const childrenOf = new Map();
-    for (const [, tw] of tweetMap) {
-      if (tw.inReplyToId && tw.author && tw.author.userName === authorUsername) {
-        if (!childrenOf.has(tw.inReplyToId)) childrenOf.set(tw.inReplyToId, []);
-        childrenOf.get(tw.inReplyToId).push(tw);
-      }
-    }
-
-    // Walk backward from the submitted tweet to find the thread start
-    let start = tweet;
-    const backVisited = new Set();
-    while (start.inReplyToId && tweetMap.has(start.inReplyToId) && !backVisited.has(start.inReplyToId)) {
-      const parent = tweetMap.get(start.inReplyToId);
-      if (parent.author && parent.author.userName === authorUsername) {
-        backVisited.add(start.id);
-        start = parent;
-      } else {
-        break;
-      }
-    }
-
-    // Walk forward from the thread start, following self-replies
-    const chain = [start];
-    const fwdVisited = new Set([start.id]);
-    let current = start;
-    const maxChain = 50;
-
-    while (chain.length < maxChain) {
-      const children = childrenOf.get(current.id) || [];
-      const selfReply = children.find(c => !fwdVisited.has(c.id));
-      if (!selfReply) break;
-      chain.push(selfReply);
-      fwdVisited.add(selfReply.id);
-      current = selfReply;
-    }
-
-    console.log(`  Self-reply chain: ${chain.length} tweets (filtered from ${allCandidates.length} candidates)`);
-    return chain;
-  }
-
-  // Fallback: inReplyToId not available — return all but capped and sorted
-  console.log(`  Warning: inReplyToId not available, returning all ${allCandidates.length} candidates`);
-  allCandidates.sort((a, b) => {
-    if (a.id < b.id) return -1;
-    if (a.id > b.id) return 1;
-    return 0;
-  });
-
-  const seen = new Set();
-  return allCandidates.filter(t => {
-    if (seen.has(t.id)) return false;
-    seen.add(t.id);
-    return true;
-  }).slice(0, 50);
-}
+// Thread detection is now handled inside scrapeTweet() via GraphQL interception.
+// The scraper returns threadTweets[] already filtered to same-author self-reply chain.
 
 // ─── Markdown Generation ────────────────────────────────────────────────────
 
@@ -373,6 +243,8 @@ function renderSingleTweet(tweet, processedText, mediaFiles, profilePicPath, ind
 }
 
 // ─── Article Handling ───────────────────────────────────────────────────────
+// Article scraping is now handled inside scrapeTweet() via Playwright.
+// The scraper returns article: { title, coverImage, content, hasCodeBlocks }
 
 function detectArticleUrl(tweet) {
   const urls = (tweet.entities || {}).urls || [];
@@ -385,163 +257,9 @@ function detectArticleUrl(tweet) {
   return null;
 }
 
-// Known code language identifiers that the API may return as separate blocks
-const CODE_LANG_IDENTIFIERS = new Set([
-  'javascript', 'js', 'typescript', 'ts', 'python', 'py', 'java', 'c', 'cpp', 'c++',
-  'csharp', 'c#', 'go', 'rust', 'ruby', 'php', 'swift', 'kotlin', 'scala', 'r',
-  'sql', 'html', 'css', 'scss', 'sass', 'less', 'json', 'yaml', 'yml', 'xml',
-  'bash', 'shell', 'sh', 'zsh', 'powershell', 'ps1', 'dockerfile', 'docker',
-  'markdown', 'md', 'text', 'plaintext', 'txt', 'solidity', 'sol', 'move',
-  'graphql', 'gql', 'toml', 'ini', 'conf', 'config', 'env', 'jsx', 'tsx',
-  'vue', 'svelte', 'astro', 'prisma', 'hcl', 'terraform', 'nginx', 'apache'
-]);
-
-function isCodeLangIdentifier(text) {
-  const trimmed = (text || '').trim().toLowerCase();
-  return CODE_LANG_IDENTIFIERS.has(trimmed) || /^[a-z]{1,15}$/.test(trimmed);
-}
-
-function processArticleContents(contents) {
-  // The API returns code blocks as: [{ text: "language" }, { text: "code content" }]
-  // We need to detect this pattern and reconstruct proper markdown code blocks
-  const result = [];
-  let i = 0;
-
-  while (i < contents.length) {
-    const block = contents[i];
-    const text = (block.text || '').trim();
-    
-    if (!text) {
-      i++;
-      continue;
-    }
-
-    // Check if this looks like a standalone language identifier
-    // (short single word that matches known languages)
-    const nextBlock = contents[i + 1];
-    const nextText = nextBlock ? (nextBlock.text || '').trim() : '';
-    
-    if (isCodeLangIdentifier(text) && text.length < 20 && !text.includes(' ') && nextText) {
-      // This appears to be a code language identifier followed by code content
-      const lang = text.toLowerCase();
-      // The next block(s) might be the code content
-      // Collect subsequent blocks until we hit another language identifier or a long paragraph
-      let codeContent = nextText;
-      i += 2;
-      
-      // Check if subsequent blocks are also part of this code block
-      while (i < contents.length) {
-        const checkBlock = contents[i];
-        const checkText = (checkBlock.text || '').trim();
-        
-        // Stop if we hit another language identifier or a long paragraph-like text
-        if (!checkText || 
-            (isCodeLangIdentifier(checkText) && checkText.length < 20 && !checkText.includes(' ')) ||
-            (checkText.length > 200 && checkText.includes('. '))) {
-          break;
-        }
-        
-        // If this looks like more code (contains code-like characters), add it
-        if (checkText.includes('{') || checkText.includes('}') || 
-            checkText.includes('(') || checkText.includes(')') ||
-            checkText.includes(':') || checkText.includes('=') ||
-            checkText.startsWith('-') || checkText.startsWith('#') ||
-            /^\d+\./.test(checkText)) {
-          codeContent += '\n' + checkText;
-          i++;
-        } else {
-          break;
-        }
-      }
-      
-      result.push('```' + lang + '\n' + codeContent + '\n```');
-    } else {
-      // Regular text block
-      result.push(text);
-      i++;
-    }
-  }
-
-  return result.filter(t => t.trim().length > 0).join('\n\n');
-}
-
-function hasEmptyCodeBlocks(contents) {
-  if (!contents || !Array.isArray(contents)) return false;
-  // Count empty/whitespace-only blocks - indicates stripped code blocks
-  const emptyBlocks = contents.filter(c => {
-    const text = (c.text || '').trim();
-    return text === '' || text === ' ';
-  }).length;
-  return emptyBlocks >= 3;
-}
-
-async function fetchArticleContent(tweetId, articleUrl) {
-  try {
-    console.log(`  Fetching article via twitterapi.io Article API for tweet ${tweetId}...`);
-    await sleep(5500); // rate limit
-    const res = await httpGet(
-      `https://api.twitterapi.io/twitter/article?tweet_id=${tweetId}`,
-      { 'X-API-Key': API_KEY }
-    );
-    const data = JSON.parse(res.body);
-    if (data.status !== 'success' || !data.article) {
-      console.error(`  Article API returned: ${JSON.stringify(data).substring(0, 200)}`);
-      return { title: '', coverImage: '', content: null };
-    }
-
-    const article = data.article;
-    const title = article.title || '';
-    const coverImage = article.cover_media_img_url || '';
-    const contents = article.contents || [];
-
-    // Check if API stripped code blocks (returns empty whitespace blocks)
-    const emptyBlockCount = contents.filter(c => (c.text || '').trim() === '' || (c.text || '').trim() === ' ').length;
-    const codeBlocksStripped = hasEmptyCodeBlocks(contents);
-    
-    if (codeBlocksStripped) {
-      console.log(`  ⚠️  Detected ${emptyBlockCount} empty blocks - code blocks likely stripped by API`);
-      
-      // Try Playwright scraper with cookies if available
-      if (articleScraper && articleUrl) {
-        console.log(`  Attempting Playwright scrape with cookies...`);
-        try {
-          const scraped = await articleScraper.scrapeArticle(articleUrl, { headless: true });
-          
-          if (scraped.needsCookies) {
-            console.log(`  ⚠️  No X cookies found. Export your cookies to x_cookies.json for full article content.`);
-          } else if (scraped.content && scraped.content.length > 100) {
-            console.log(`  ✓ Playwright scraped: "${scraped.title || title}" (${scraped.content.length} chars)`);
-            if (scraped.hasCodeBlocks) {
-              console.log(`  ✓ Code blocks successfully extracted!`);
-            }
-            return {
-              title: scraped.title || title,
-              coverImage: scraped.coverImage || coverImage,
-              content: scraped.content,
-              codeBlocksStripped: false
-            };
-          }
-        } catch (scrapeErr) {
-          console.error(`  Playwright scrape failed: ${scrapeErr.message}`);
-        }
-      }
-    }
-
-    // Build article text from content blocks with code block reconstruction
-    const contentText = processArticleContents(contents);
-
-    console.log(`  Article fetched: "${title}" (${contentText.length} chars, ${contents.length} blocks)`);
-    return { title, coverImage, content: contentText || null, codeBlocksStripped };
-  } catch (e) {
-    console.error(`  Article API failed: ${e.message}`);
-    return { title: '', coverImage: '', content: null };
-  }
-}
-
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  if (!API_KEY) throw new Error('TWITTER_API_KEY environment variable is required');
   if (!TWEET_URL) throw new Error('TWEET_URL environment variable is required');
 
   // Extract tweet ID
@@ -550,20 +268,23 @@ async function main() {
   const tweetId = idMatch[1];
   console.log(`Tweet ID: ${tweetId}`);
 
-  // Fetch the main tweet
-  const tweet = await fetchTweet(tweetId);
+  // ── Scrape everything in one Playwright session ──
+  console.log('Launching Playwright scraper...');
+  const { tweet, threadTweets, article } = await scrapeTweet(TWEET_URL, { headless: true });
+  
   console.log(`Author: @${tweet.author.userName}`);
   console.log(`Text: ${(tweet.text || '').substring(0, 80)}...`);
 
   // Determine tweet type
   const articleUrl = detectArticleUrl(tweet);
-  const isArticle = !!articleUrl;
-  const conversationId = tweet.conversationId || tweet.id;
-  const isConversationRoot = conversationId === tweet.id;
+  const isArticle = !!articleUrl || !!article;
+  const isThread = threadTweets.length > 1;
+  const allTweets = isThread ? threadTweets : [tweet];
+
+  if (isThread) console.log(`Thread: ${allTweets.length} tweets from @${tweet.author.userName}`);
+  if (isArticle) console.log(`Article detected${article ? ` — scraped: "${article.title}"` : ''}`);
 
   // Setup directories
-  const createdDate = tweet.createdAt ? new Date(tweet.createdAt) : new Date();
-  const datePrefix = createdDate.toISOString().split('T')[0];
   const mediaDir = `tweets/media/${tweetId}`;
   fs.mkdirSync(mediaDir, { recursive: true });
   fs.mkdirSync('tweets', { recursive: true });
@@ -571,32 +292,7 @@ async function main() {
   // Download profile pic
   const profilePicPath = await downloadProfilePic(tweet, mediaDir);
 
-  // ── Handle based on type ──
-
-  let allTweets = [tweet];
-  let isThread = false;
-
-  // Check for thread: fetch replies and look for same-author self-reply chain
-  if (isConversationRoot && tweet.replyCount > 0) {
-    console.log('Checking for thread (same-author replies)...');
-    const threadTweets = await fetchThreadTweets(tweet);
-    if (threadTweets.length > 1) {
-      isThread = true;
-      allTweets = threadTweets;
-      console.log(`Thread detected: ${allTweets.length} tweets from @${tweet.author.userName}`);
-    }
-  } else if (!isConversationRoot) {
-    // This tweet is a reply in a conversation - check if it's part of a thread by the same author
-    console.log('Tweet is part of a conversation, checking for thread...');
-    const threadTweets = await fetchThreadTweets(tweet);
-    if (threadTweets.length > 1) {
-      isThread = true;
-      allTweets = threadTweets;
-      console.log(`Thread detected: ${allTweets.length} tweets from @${tweet.author.userName}`);
-    }
-  }
-
-  // Process each tweet
+  // Process each tweet (download media, process text)
   const tweetDataList = [];
   for (let i = 0; i < allTweets.length; i++) {
     const tw = allTweets[i];
@@ -613,7 +309,6 @@ async function main() {
 
   // ── Generate Markdown ──
 
-  // Generate human-friendly filename: authorname_slug.md
   const firstTweetText = allTweets[0].text || '';
   const slug = generateSlug(firstTweetText, 50);
   const authorSlug = generateSlug(tweet.author.userName, 20);
@@ -665,18 +360,16 @@ saved_at: "${new Date().toISOString()}"
     if (i < tweetDataList.length - 1) md += '---\n\n';
   }
 
-  // If article, fetch and embed article content via API
+  // If article, embed scraped article content
   if (isArticle) {
+    const artUrl = articleUrl || (article ? '' : '');
     md += `---\n\n## Article Content\n\n`;
-    md += `**Article URL**: [${articleUrl}](${articleUrl})\n\n`;
-    const { title, coverImage, content, codeBlocksStripped } = await fetchArticleContent(tweetId, articleUrl);
-    if (coverImage) md += `![Cover](${coverImage})\n\n`;
-    if (title) md += `### ${title}\n\n`;
-    if (codeBlocksStripped) {
-      md += `> ⚠️ **Note**: This article contains code blocks that could not be extracted due to API limitations. Please visit the original article link above to view the complete content with code examples.\n\n`;
-    }
-    if (content) {
-      md += content + '\n\n';
+    if (artUrl) md += `**Article URL**: [${artUrl}](${artUrl})\n\n`;
+    
+    if (article && article.content) {
+      if (article.coverImage) md += `![Cover](${article.coverImage})\n\n`;
+      if (article.title) md += `### ${article.title}\n\n`;
+      md += article.content + '\n\n';
     } else {
       md += `> *Article content could not be extracted. Visit the link above to read the full article.*\n\n`;
     }

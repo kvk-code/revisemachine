@@ -354,6 +354,106 @@ function detectArticleUrl(tweet) {
   return null;
 }
 
+// ─── Merge Logic ────────────────────────────────────────────────────────────
+// When both Playwright and API return data, merge to get the most complete result.
+
+function mergeMediaItems(pwMedia, apiMedia) {
+  // Union of media from both sources, deduplicate by media_url_https
+  const seen = new Set();
+  const merged = [];
+  for (const m of [...(pwMedia || []), ...(apiMedia || [])]) {
+    const key = m.media_url_https || m.media_url || m.url || JSON.stringify(m);
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(m);
+    }
+  }
+  return merged;
+}
+
+function mergeTweetData(pwTweet, apiTweet) {
+  if (!pwTweet) return apiTweet;
+  if (!apiTweet) return pwTweet;
+
+  // Merge media: union from both sources
+  const mergedMedia = mergeMediaItems(
+    (pwTweet.extendedEntities || {}).media,
+    (apiTweet.extendedEntities || {}).media
+  );
+
+  // Merge entity URLs (union, deduplicate by expanded_url)
+  const pwUrls = ((pwTweet.entities || {}).urls || []);
+  const apiUrls = ((apiTweet.entities || {}).urls || []);
+  const seenUrls = new Set();
+  const mergedUrls = [];
+  for (const u of [...pwUrls, ...apiUrls]) {
+    const key = u.expanded_url || u.url;
+    if (!seenUrls.has(key)) { seenUrls.add(key); mergedUrls.push(u); }
+  }
+
+  // Engagement: take max from each source
+  const maxOf = (a, b) => Math.max(a || 0, b || 0);
+
+  return {
+    // Core data: prefer Playwright (handles long tweets via note_tweet)
+    id: pwTweet.id || apiTweet.id,
+    text: (pwTweet.text || '').length >= (apiTweet.text || '').length ? pwTweet.text : apiTweet.text,
+    createdAt: pwTweet.createdAt || apiTweet.createdAt,
+    url: pwTweet.url || apiTweet.url,
+    conversationId: pwTweet.conversationId || apiTweet.conversationId,
+    inReplyToId: pwTweet.inReplyToId || apiTweet.inReplyToId,
+    inReplyToUserId: pwTweet.inReplyToUserId || apiTweet.inReplyToUserId,
+
+    // Author: prefer Playwright, fill gaps from API
+    author: {
+      name: pwTweet.author?.name || apiTweet.author?.name || '',
+      userName: pwTweet.author?.userName || apiTweet.author?.userName || '',
+      profilePicture: pwTweet.author?.profilePicture || apiTweet.author?.profilePicture || '',
+      verified: pwTweet.author?.verified || apiTweet.author?.verified || false,
+      description: pwTweet.author?.description || apiTweet.author?.description || ''
+    },
+
+    // Article data: always from Playwright (API strips code blocks)
+    articleData: pwTweet.articleData || null,
+
+    // Merged entities
+    entities: {
+      urls: mergedUrls,
+      hashtags: [...(pwTweet.entities?.hashtags || []), ...(apiTweet.entities?.hashtags || [])].filter(
+        (h, i, arr) => arr.findIndex(x => x.text === h.text) === i
+      ),
+      user_mentions: [...(pwTweet.entities?.user_mentions || []), ...(apiTweet.entities?.user_mentions || [])].filter(
+        (m, i, arr) => arr.findIndex(x => x.screen_name === m.screen_name) === i
+      )
+    },
+
+    // Merged media (union from both)
+    extendedEntities: { media: mergedMedia },
+
+    // Engagement: take the higher values
+    likeCount: maxOf(pwTweet.likeCount, apiTweet.likeCount),
+    retweetCount: maxOf(pwTweet.retweetCount, apiTweet.retweetCount),
+    replyCount: maxOf(pwTweet.replyCount, apiTweet.replyCount),
+    viewCount: maxOf(pwTweet.viewCount, apiTweet.viewCount),
+    bookmarkCount: maxOf(pwTweet.bookmarkCount, apiTweet.bookmarkCount),
+    quoteCount: maxOf(pwTweet.quoteCount, apiTweet.quoteCount),
+
+    // Quoted tweet: prefer whichever has it
+    quoted_tweet: pwTweet.quoted_tweet || apiTweet.quoted_tweet || null,
+
+    // Article flag
+    isArticle: pwTweet.isArticle || apiTweet.isArticle
+  };
+}
+
+function mergeThreads(pwThread, apiThread) {
+  // Use whichever found more tweets; if equal, prefer Playwright
+  if (!pwThread || pwThread.length === 0) return apiThread || [];
+  if (!apiThread || apiThread.length === 0) return pwThread;
+  if (pwThread.length >= apiThread.length) return pwThread;
+  return apiThread;
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -367,48 +467,109 @@ async function main() {
   console.log(`Tweet ID: ${tweetId}`);
   console.log(`Auth token: ${AUTH_TOKEN ? 'available' : 'not set'} | API key: ${API_KEY ? 'available' : 'not set'}`);
 
-  // ── Strategy: Playwright primary, Twitter API fallback ──
-  // Articles: ALWAYS use Playwright (API strips code blocks)
-  // Tweets: Playwright first → API fallback if Playwright fails
+  // ── Strategy: Run both methods, merge for most complete result ──
+  // Both available → run in parallel, merge results
+  // One available → run that method only
+  // Articles: always use Playwright content (API strips code blocks)
   
+  let pwResult = null;   // Playwright result
+  let apiResult = null;  // API result
   let tweet = null;
   let threadTweets = [];
   let article = null;
   let usedMethod = '';
 
-  // ── Try Playwright first (if auth_token available) ──
-  if (AUTH_TOKEN) {
+  // ── Run both methods in parallel when both credentials available ──
+  if (AUTH_TOKEN && API_KEY) {
+    console.log('\n[Strategy] Both credentials available — running Playwright + API in parallel...');
+
+    const [pwOutcome, apiOutcome] = await Promise.allSettled([
+      (async () => {
+        console.log('  [Playwright] Starting...');
+        const result = await scrapeTweet(TWEET_URL, { headless: true });
+        console.log('  [Playwright] Done');
+        return result;
+      })(),
+      (async () => {
+        console.log('  [API] Starting...');
+        const tw = await fetchTweet(tweetId);
+        let thread = [];
+        const conversationId = tw.conversationId || tw.id;
+        const isRoot = conversationId === tw.id;
+        if ((isRoot && tw.replyCount > 0) || !isRoot) {
+          thread = await fetchThreadTweets(tw);
+        }
+        console.log('  [API] Done');
+        return { tweet: tw, threadTweets: thread };
+      })()
+    ]);
+
+    if (pwOutcome.status === 'fulfilled') {
+      pwResult = pwOutcome.value;
+      console.log(`  [Playwright] ✓ Got tweet: @${pwResult.tweet?.author?.userName || '?'}, media: ${(pwResult.tweet?.extendedEntities?.media || []).length}, thread: ${(pwResult.threadTweets || []).length}`);
+    } else {
+      console.log(`  [Playwright] ✗ Failed: ${pwOutcome.reason?.message || 'unknown'}`);
+    }
+
+    if (apiOutcome.status === 'fulfilled') {
+      apiResult = apiOutcome.value;
+      console.log(`  [API] ✓ Got tweet: @${apiResult.tweet?.author?.userName || '?'}, media: ${(apiResult.tweet?.extendedEntities?.media || []).length}, thread: ${(apiResult.threadTweets || []).length}`);
+    } else {
+      console.log(`  [API] ✗ Failed: ${apiOutcome.reason?.message || 'unknown'}`);
+    }
+
+    // Merge results
+    const pwTweet = pwResult?.tweet || null;
+    const apiTweet = apiResult?.tweet || null;
+    tweet = mergeTweetData(pwTweet, apiTweet);
+    threadTweets = mergeThreads(pwResult?.threadTweets, apiResult?.threadTweets);
+    article = pwResult?.article || null;
+
+    if (pwTweet && apiTweet) {
+      usedMethod = 'merged (playwright+api)';
+      const pwMediaCount = (pwTweet.extendedEntities?.media || []).length;
+      const apiMediaCount = (apiTweet.extendedEntities?.media || []).length;
+      const mergedMediaCount = (tweet.extendedEntities?.media || []).length;
+      console.log(`\n[Merge] Media: pw=${pwMediaCount} + api=${apiMediaCount} → merged=${mergedMediaCount}`);
+      console.log(`[Merge] Thread: pw=${(pwResult?.threadTweets || []).length} | api=${(apiResult?.threadTweets || []).length} → used=${threadTweets.length}`);
+      console.log(`[Merge] Engagement: likes=${tweet.likeCount}, retweets=${tweet.retweetCount}, views=${tweet.viewCount}`);
+    } else if (pwTweet) {
+      usedMethod = 'playwright';
+    } else if (apiTweet) {
+      usedMethod = 'api';
+    }
+
+  } else if (AUTH_TOKEN) {
+    // ── Playwright only ──
     try {
-      console.log('\n[Strategy] Trying Playwright (primary)...');
+      console.log('\n[Strategy] Auth token only — using Playwright...');
       const result = await scrapeTweet(TWEET_URL, { headless: true });
       tweet = result.tweet;
       threadTweets = result.threadTweets || [];
       article = result.article || null;
       usedMethod = 'playwright';
       console.log(`[Strategy] Playwright succeeded`);
-    } catch (playwrightErr) {
-      console.error(`[Strategy] Playwright failed: ${playwrightErr.message}`);
+    } catch (err) {
+      console.error(`[Strategy] Playwright failed: ${err.message}`);
     }
-  }
 
-  // ── Fallback to Twitter API (if Playwright failed and API key available) ──
-  if (!tweet && API_KEY) {
+  } else if (API_KEY) {
+    // ── API only ──
     try {
-      console.log('\n[Strategy] Falling back to Twitter API...');
+      console.log('\n[Strategy] API key only — using Twitter API...');
       tweet = await fetchTweet(tweetId);
       usedMethod = 'api';
       console.log(`[Strategy] API succeeded`);
 
-      // Thread detection via API
       const conversationId = tweet.conversationId || tweet.id;
-      const isConversationRoot = conversationId === tweet.id;
-      if ((isConversationRoot && tweet.replyCount > 0) || !isConversationRoot) {
+      const isRoot = conversationId === tweet.id;
+      if ((isRoot && tweet.replyCount > 0) || !isRoot) {
         console.log('Checking for thread (API)...');
         const apiThread = await fetchThreadTweets(tweet);
         if (apiThread.length > 1) threadTweets = apiThread;
       }
-    } catch (apiErr) {
-      console.error(`[Strategy] API also failed: ${apiErr.message}`);
+    } catch (err) {
+      console.error(`[Strategy] API failed: ${err.message}`);
     }
   }
 
@@ -417,14 +578,12 @@ async function main() {
   }
 
   // ── Article handling: Playwright-only ──
-  // If we got tweet data from API but it's an article, try Playwright for article content
   const articleUrl = detectArticleUrl(tweet);
   if (articleUrl && !article && AUTH_TOKEN && usedMethod === 'api') {
     try {
-      console.log('\n[Strategy] Article detected — scraping with Playwright (auth_token required for articles)...');
+      console.log('\n[Strategy] Article detected — scraping with Playwright for article content...');
       const result = await scrapeTweet(TWEET_URL, { headless: true });
       article = result.article || null;
-      // Also pick up thread data from Playwright if we didn't get it from API
       if (result.threadTweets && result.threadTweets.length > threadTweets.length) {
         threadTweets = result.threadTweets;
       }
@@ -500,6 +659,7 @@ quotes: ${tweet.quoteCount || 0}
 is_thread: ${isThread}
 thread_count: ${allTweets.length}
 media_count: ${totalMedia}
+method: "${usedMethod}"
 saved_at: "${new Date().toISOString()}"
 ---
 

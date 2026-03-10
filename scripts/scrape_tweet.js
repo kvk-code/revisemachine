@@ -394,6 +394,36 @@ function articleBlocksToMarkdown(blocks, entityMap) {
     }
   }
 
+  /**
+   * Process inline entity ranges (links, etc.) within block text.
+   * entityRanges: [{ offset, length, key }, ...]
+   * Returns text with markdown links applied.
+   */
+  function applyInlineEntities(text, entityRanges) {
+    if (!entityRanges || entityRanges.length === 0) return text;
+    
+    // Sort by offset descending so we can replace from end to start
+    // (avoids offset shifting issues)
+    const sorted = [...entityRanges].sort((a, b) => b.offset - a.offset);
+    
+    let result = text;
+    for (const range of sorted) {
+      const entity = entityLookup[range.key] || entityLookup[String(range.key)];
+      if (!entity) continue;
+      
+      const entityType = entity.type || '';
+      const entityData = entity.data || {};
+      
+      if (entityType === 'LINK' && entityData.url) {
+        const linkText = result.substring(range.offset, range.offset + range.length);
+        const markdownLink = `[${linkText}](${entityData.url})`;
+        result = result.substring(0, range.offset) + markdownLink + result.substring(range.offset + range.length);
+      }
+    }
+    
+    return result;
+  }
+
   const parts = [];
   let hasCodeBlocks = false;
   let inCodeBlock = false;
@@ -413,6 +443,7 @@ function articleBlocksToMarkdown(blocks, entityMap) {
   for (const block of blocks) {
     const text = block.text || '';
     const type = block.type || 'unstyled';
+    const entityRanges = block.entityRanges || [];
 
     if (type === 'code-block') {
       if (!inCodeBlock) {
@@ -435,8 +466,7 @@ function articleBlocksToMarkdown(blocks, entityMap) {
 
     if (type === 'atomic') {
       // Atomic blocks reference entities via entityRanges
-      const entityRefs = block.entityRanges || [];
-      for (const ref of entityRefs) {
+      for (const ref of entityRanges) {
         const entity = entityLookup[ref.key] || entityLookup[String(ref.key)];
         if (!entity) continue;
         
@@ -452,33 +482,39 @@ function articleBlocksToMarkdown(blocks, entityMap) {
           if (imgUrl) parts.push(`![Image](${imgUrl})`);
         } else if (entityType === 'DIVIDER') {
           parts.push('---');
+        } else if (entityType === 'LINK' && entityData.url) {
+          // Standalone link in atomic block
+          const linkText = text.trim() || entityData.url;
+          parts.push(`[${linkText}](${entityData.url})`);
         }
-        // Skip unknown entity types
       }
       continue;
     }
 
+    // Apply inline links to text content
+    const processedText = applyInlineEntities(text, entityRanges);
+
     switch (type) {
       case 'header-one':
-        parts.push('# ' + text);
+        parts.push('# ' + processedText);
         break;
       case 'header-two':
-        parts.push('## ' + text);
+        parts.push('## ' + processedText);
         break;
       case 'header-three':
-        parts.push('### ' + text);
+        parts.push('### ' + processedText);
         break;
       case 'blockquote':
-        parts.push(text.split('\n').map(l => '> ' + l).join('\n'));
+        parts.push(processedText.split('\n').map(l => '> ' + l).join('\n'));
         break;
       case 'ordered-list-item':
-        parts.push('- ' + text);
+        parts.push('- ' + processedText);
         break;
       case 'unordered-list-item':
-        parts.push('- ' + text);
+        parts.push('- ' + processedText);
         break;
       default:
-        if (text.trim()) parts.push(text);
+        if (processedText.trim()) parts.push(processedText);
         break;
     }
   }

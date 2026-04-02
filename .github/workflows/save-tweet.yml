@@ -16,7 +16,8 @@ permissions:
 jobs:
   save-tweet:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 15
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,28 +26,38 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ hashFiles('package.json') }}
 
       - name: Install Dependencies
-        run: |
-          npm install
-          npx playwright install chromium
+        run: npm install
+
+      - name: Install Playwright Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
 
       - name: Archive Tweet
         id: archive
+        timeout-minutes: 5
         env:
           X_AUTH_TOKEN: ${{ secrets.X_AUTH_TOKEN }}
           TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+          TWEET_URL: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tweet_url || github.event.inputs.tweet_url }}
         run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            export TWEET_URL="${{ github.event.client_payload.tweet_url }}"
-          else
-            export TWEET_URL="${{ github.event.inputs.tweet_url }}"
-          fi
           echo "Processing: $TWEET_URL"
           node scripts/process_tweet.js
-          
+
           # Capture the generated filename for title generation
-          GENERATED_FILE=$(ls -t tweets/*.md | head -1)
+          GENERATED_FILE=$(find tweets -maxdepth 1 -name '*.md' -newer tweets/.gitkeep -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+          if [ -z "$GENERATED_FILE" ]; then
+            GENERATED_FILE=$(ls -t tweets/*.md 2>/dev/null | head -1)
+          fi
           echo "generated_file=$GENERATED_FILE" >> $GITHUB_OUTPUT
           echo "Generated: $GENERATED_FILE"
 
@@ -55,13 +66,24 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Cache HuggingFace model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-qwen2.5-0.5b-instruct
+
       - name: Install Python Dependencies
-        run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install transformers accelerate
+        run: pip install -r requirements.txt
 
       - name: Generate Smart Title
         id: title
+        timeout-minutes: 2
         run: |
           GENERATED_FILE="${{ steps.archive.outputs.generated_file }}"
           if [ -z "$GENERATED_FILE" ] || [ ! -f "$GENERATED_FILE" ]; then
@@ -73,14 +95,14 @@ jobs:
           echo "Generating title for: $GENERATED_FILE"
           SMART_SLUG=$(python scripts/generate_title.py "$GENERATED_FILE")
           echo "Smart slug: $SMART_SLUG"
-          
+
           # Extract author from current filename (format: authorname_slug.md)
           BASENAME=$(basename "$GENERATED_FILE" .md)
           AUTHOR_SLUG=$(echo "$BASENAME" | cut -d'_' -f1)
-          
+
           # Build new filename: authorname_smarttitle.md
           NEW_FILENAME="tweets/${AUTHOR_SLUG}_${SMART_SLUG}.md"
-          
+
           if [ "$GENERATED_FILE" != "$NEW_FILENAME" ]; then
             echo "Renaming: $GENERATED_FILE -> $NEW_FILENAME"
             mv "$GENERATED_FILE" "$NEW_FILENAME"
@@ -91,25 +113,22 @@ jobs:
           fi
 
       - name: Commit and Push
+        env:
+          TWEET_URL: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tweet_url || github.event.inputs.tweet_url }}
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          
+
           # Pull latest changes to avoid conflicts from concurrent runs
           git pull --rebase origin master || true
-          
+
           git add tweets/
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-              TWEET_URL="${{ github.event.client_payload.tweet_url }}"
-            else
-              TWEET_URL="${{ github.event.inputs.tweet_url }}"
-            fi
             TWEET_ID=$(echo "$TWEET_URL" | grep -oP '(?<=status/)\d+')
             git commit -m "Archive tweet ${TWEET_ID}"
-            
+
             # Retry push with pull if it fails (handles race conditions)
             git push || (git pull --rebase origin master && git push)
           fi

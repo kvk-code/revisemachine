@@ -1,0 +1,6 @@
+# Git LFS — track large media files (videos) in tweet archives
+# Images (.jpg/.png) stay in regular git (small, renders reliably in markdown)
+# Videos (.mp4) often exceed GitHub's 100MB limit and need LFS
+*.mp4 filter=lfs diff=lfs merge=lfs -text
+*.mov filter=lfs diff=lfs merge=lfs -text
+*.webm filter=lfs diff=lfs merge=lfs -text

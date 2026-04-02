@@ -4,16 +4,17 @@ A fully decentralized, self-hosted, open-source solution to save tweets as markd
 
 ## ✨ Features
 
+- **Dual-Mode Scraping**: Uses Playwright (auth_token) as primary, with twitterapi.io API as fallback — runs both in parallel and merges best results
+- **Article Code Blocks**: Full article extraction including code blocks (API-only solutions strip them)
+- **Large Video Support**: Git LFS automatically handles videos over 100MB — no more push failures
+- **Smart Filenames**: Local LLM generates semantic titles like `author_building-a-cli-tool.md` instead of generic timestamps
 - **Privacy First**: All credentials stored locally in your browser - never sent to any server
 - **IPFS Ready**: Static frontend can be hosted on IPFS for censorship resistance
 - **Markdown Output**: Tweets saved as clean markdown with full metadata
 - **Thread Support**: Automatically detects and archives all tweets in a thread by the same author
-- **Article Support**: Extracts full content from X/Twitter articles (not just the link)
 - **Media Downloads**: Downloads images, videos, and thumbnails to your repository
 - **GitHub Actions**: Processing happens in your own GitHub repository
-- **Cost Effective**: Uses twitterapi.io (~$0.15 per 1000 tweets)
 - **Dark/Light Theme**: Futuristic cybernetic design with a theme toggle that persists across sessions
-- **Hosted Version Interest Form**: Optional encrypted expression-of-interest form for users who want a managed hosted solution
 
 ## 🚀 Quick Start
 
@@ -28,12 +29,23 @@ A fully decentralized, self-hosted, open-source solution to save tweets as markd
 1. Fork this repository
 2. Go to **Settings** → **General** → **Danger Zone** → **Change visibility** → **Make private**
 
-### 2. Get Your Twitter API Key
+### 2. Get Your X Auth Token (Primary) — FREE
+
+The **X auth_token** is the primary scraping method — it's free and provides full article content including code blocks.
+
+1. Log into [x.com](https://x.com)
+2. Open DevTools (`F12`) → Application → Cookies → `x.com`
+3. Find `auth_token` and copy its value
+4. See [AUTH_TOKEN_GUIDE.md](AUTH_TOKEN_GUIDE.md) for detailed instructions (Chrome, Safari, mobile)
+
+### 3. Get Twitter API Key (Optional Fallback)
+
+The API key is optional — used as fallback when Playwright fails.
 
 1. Go to [twitterapi.io/dashboard](https://twitterapi.io/dashboard)
 2. Sign up and get your API key (~$0.15 per 1000 tweets)
 
-### 3. Create a Fine-Grained PAT (Repository-Scoped)
+### 4. Create a Fine-Grained PAT (Repository-Scoped)
 
 **This is more secure than account-wide tokens!**
 
@@ -51,7 +63,7 @@ A fully decentralized, self-hosted, open-source solution to save tweets as markd
 
 > ⚠️ **Security Note**: This token can ONLY access your ReviseMachine repository, not your other repos!
 
-### 4. Use the Frontend to Save Twitter API Key
+### 5. Use the Frontend to Save Credentials
 
 The frontend can **automatically create the GitHub Secret** for you:
 
@@ -62,7 +74,7 @@ The frontend can **automatically create the GitHub Secret** for you:
 
 This uses **libsodium encryption** in your browser - the key is encrypted before being sent to GitHub.
 
-### 5. Use the Frontend
+### 6. Use the Frontend
 
 Open `frontend/index.html` in your browser (or access via IPFS), then:
 
@@ -99,7 +111,8 @@ Just paste any X/Twitter URL — the system automatically detects and handles:
 |------|-----------|-----------------|
 | **Simple Tweet** | Default | Tweet text, media (images/videos), profile pic, engagement stats |
 | **Thread** | Author has self-replies | All tweets by the author in chronological order |
-| **Article** | Tweet links to `x.com/i/article/` | Full article content (title, body, cover image) via API |
+| **Article** | Tweet links to `x.com/i/article/` | Full article content (title, body, **code blocks**, cover image) |
+| **Video Tweet** | Media type `video` | Video file + thumbnail — large videos (>100MB) handled via Git LFS |
 
 > **No manual selection needed!** The backend automatically determines the tweet type and archives accordingly.
 
@@ -121,12 +134,24 @@ Just paste any X/Twitter URL — the system automatically detects and handles:
 │  ┌─────────────────────────────────────────────────┐   │
 │  │  GitHub Action (save-tweet.yml)                 │   │
 │  │  1. Receives tweet URL                          │   │
-│  │  2. Calls twitterapi.io to fetch tweet          │   │
-│  │  3. Generates markdown file                     │   │
-│  │  4. Commits to tweets/ folder                   │   │
+│  │  2. Runs Playwright + API in parallel           │   │
+│  │  3. Merges best results from both               │   │
+│  │  4. Generates smart filename via local LLM      │   │
+│  │  5. Commits to tweets/ (LFS for large videos)   │   │
 │  └─────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
+
+### Dual-Mode Scraping Strategy
+
+| Credentials Available | Strategy |
+|----------------------|----------|
+| **Both auth_token + API key** | Run Playwright + API in parallel via `Promise.allSettled`, merge best results |
+| **auth_token only** | Playwright only (full article content with code blocks) |
+| **API key only** | API only (article text, no code blocks) |
+| **Neither** | Error |
+
+**Merge logic**: Longer text wins, max engagement counts, union of media items, Playwright article content preferred.
 
 ## 🌐 Deploy Frontend to IPFS
 
@@ -193,7 +218,7 @@ The frontend files (`frontend/index.html` and `frontend/interest.html`) include 
 
 ## 📄 Example Output
 
-When you save a tweet, it creates a file like `tweets/2024-01-15-1234567890.md`:
+When you save a tweet, it creates a file like `tweets/author_smart-title.md`:
 
 ### Simple Tweet with Media
 ```markdown

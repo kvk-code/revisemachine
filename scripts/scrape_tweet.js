@@ -13,6 +13,13 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
+// FIXED: Import new utility modules for URL validation
+const { 
+  isArticleUrl, 
+  extractContentId,
+  extractAndValidateContentId 
+} = require('./utils/url_patterns');
+
 const AUTH_TOKEN_FILE = path.join(__dirname, '..', 'x_auth_token.txt');
 
 // ─── Auth Token Loading ──────────────────────────────────────────────────────
@@ -279,16 +286,18 @@ async function extractFromDOM(page, tweetId) {
     const articles = document.querySelectorAll('article[data-testid="tweet"]');
     let mainArticle = null;
     
-    for (const article of articles) {
+    if (targetId) {
       // Find the article that matches our tweet (look for status link)
-      const links = article.querySelectorAll('a[href*="/status/"]');
-      for (const link of links) {
-        if (link.href.includes(`/status/${targetId}`)) {
-          mainArticle = article;
-          break;
+      for (const article of articles) {
+        const links = article.querySelectorAll('a[href*="/status/"]');
+        for (const link of links) {
+          if (link.href.includes(`/status/${targetId}`)) {
+            mainArticle = article;
+            break;
+          }
         }
+        if (mainArticle) break;
       }
-      if (mainArticle) break;
     }
 
     if (!mainArticle) mainArticle = articles[0]; // fallback to first tweet
@@ -351,11 +360,22 @@ async function extractFromDOM(page, tweetId) {
       }
     });
 
+    // Try to extract tweet ID from page if not provided
+    let extractedId = targetId;
+    if (!extractedId) {
+      const statusLink = mainArticle.querySelector('a[href*="/status/"]');
+      if (statusLink) {
+        const match = statusLink.href.match(/\/status\/(\d+)/);
+        if (match) extractedId = match[1];
+      }
+    }
+    if (!extractedId) extractedId = 'unknown';
+
     return {
-      id: targetId,
+      id: extractedId,
       text,
       createdAt,
-      url: `https://x.com/${authorUserName}/status/${targetId}`,
+      url: `https://x.com/${authorUserName}/status/${extractedId}`,
       author: {
         name: authorName,
         userName: authorUserName,
@@ -713,10 +733,23 @@ async function scrapeTweet(tweetUrl, options = {}) {
   const cookies = buildCookies(token);
   console.log(`  [Playwright] Using auth_token (${token.substring(0, 8)}...)`);
 
-  // Extract tweet ID from URL
-  const idMatch = tweetUrl.match(/status\/(\d+)/);
-  if (!idMatch) throw new Error(`Could not extract tweet ID from: ${tweetUrl}`);
-  const tweetId = idMatch[1];
+  // FIXED: Use shared URL parsing utility with strict validation
+  let urlParseResult;
+  try {
+    urlParseResult = extractAndValidateContentId(tweetUrl);
+  } catch (error) {
+    throw new Error(`Invalid URL: ${error.message}`);
+  }
+  
+  const isArticleUrl = urlParseResult.isArticle;
+  const articleId = isArticleUrl ? urlParseResult.id : null;
+  const tweetId = !isArticleUrl ? urlParseResult.id : null;
+
+  if (isArticleUrl) {
+    console.log(`  [Playwright] Article URL detected: ID ${articleId}`);
+  } else {
+    console.log(`  [Playwright] Tweet ID: ${tweetId}`);
+  }
 
   let browser = null;
   let graphqlData = null;
@@ -800,16 +833,29 @@ async function scrapeTweet(tweetUrl, options = {}) {
 
       for (const resp of graphqlResponses) {
         const parsed = parseGraphQLResponse(resp);
-        if (parsed.mainTweet) {
-          // Find the tweet matching our ID
-          const allTweets = [parsed.mainTweet, ...parsed.conversationTweets];
-          const match = allTweets.find(t => t.id === tweetId);
-          if (match) {
-            mainTweet = match;
-            conversationTweets = parsed.conversationTweets;
-          } else if (!mainTweet) {
+        if (parsed?.mainTweet) {  // Added optional chaining for parsed
+          // For article URLs, we don't have a specific tweetId - take the first one
+          // For tweet URLs, find the tweet matching our ID
+          if (isArticleUrl && !tweetId) {
             mainTweet = parsed.mainTweet;
             conversationTweets = parsed.conversationTweets;
+            // Extract tweetId from the found tweet for later use
+            if (!mainTweet?.id) {
+              console.log('  [Playwright] Article URL returned no associated tweet in GraphQL');
+              continue;  // Try next response
+            }
+            tweetId = mainTweet.id;
+            console.log(`  [Playwright] Found parent tweet for article: ${tweetId}`);
+          } else {
+            const allTweets = [parsed.mainTweet, ...parsed.conversationTweets];
+            const match = allTweets.find(t => t.id === tweetId);
+            if (match) {
+              mainTweet = match;
+              conversationTweets = parsed.conversationTweets;
+            } else if (!mainTweet) {
+              mainTweet = parsed.mainTweet;
+              conversationTweets = parsed.conversationTweets;
+            }
           }
         }
       }
@@ -860,7 +906,7 @@ async function scrapeTweet(tweetUrl, options = {}) {
         await page.waitForSelector('[data-testid="tweet"]', { timeout: 10000 });
       } catch { /* may not appear */ }
 
-      mainTweet = await extractFromDOM(page, tweetId);
+      mainTweet = await extractFromDOM(page, isArticleUrl ? null : tweetId);
     }
 
     if (!mainTweet) {
@@ -993,6 +1039,30 @@ async function scrapeTweet(tweetUrl, options = {}) {
 
     // ── Article Detection & Content ──
     let article = null;
+    let articleScrapeError = null;
+    
+    // For article URLs: directly scrape the page content
+    // FIXED: Track error state and re-throw for article URLs
+    if (isArticleUrl && !article) {
+      console.log(`  [Playwright] Article URL mode - scraping content directly`);
+      try {
+        article = await scrapeArticleContent(page, page.url());
+        if (!article) {
+          throw new Error(`Article scraping returned null/undefined`);
+        }
+        if (!article.content) {
+          throw new Error(`Article scraped but content is empty`);
+        }
+        console.log(`  [Playwright] Article DOM scraped: "${article.title}" (${article.content.length} chars, code blocks: ${article.hasCodeBlocks})`);
+      } catch (err) {
+        console.error(`  [Playwright] Article DOM scrape failed: ${err.message}`);
+        articleScrapeError = err;
+        // For article URLs, we must have article content - re-throw
+        if (isArticleUrl) {
+          throw new Error(`Article URL processing failed: ${err.message}`);
+        }
+      }
+    }
     
     // Prefer GraphQL article data (has proper block types including code-block)
     if (mainTweet.articleData && mainTweet.articleData.blocks.length > 0) {

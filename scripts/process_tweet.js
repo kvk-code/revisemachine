@@ -4,6 +4,25 @@ const http = require('http');
 const path = require('path');
 const { scrapeTweet } = require('./scrape_tweet');
 
+// FIXED: Import new utility modules for security and validation
+const { 
+  sanitizeGitHubOutput, 
+  createSafeFilename, 
+  sanitizeAndValidateId 
+} = require('./utils/sanitize');
+
+const { 
+  parseTweetUrl, 
+  isArticleUrl, 
+  extractContentId,
+  createSyntheticId,
+  extractAndValidateContentId 
+} = require('./utils/url_patterns');
+
+const { 
+  validateAuthRequirements 
+} = require('./utils/auth_validation');
+
 const API_KEY = process.env.TWITTER_API_KEY || '';
 const AUTH_TOKEN = process.env.X_AUTH_TOKEN || '';
 const TWEET_URL = process.env.TWEET_URL;
@@ -460,11 +479,28 @@ async function main() {
   if (!TWEET_URL) throw new Error('TWEET_URL environment variable is required');
   if (!AUTH_TOKEN && !API_KEY) throw new Error('At least one of X_AUTH_TOKEN or TWITTER_API_KEY is required');
 
-  // Extract tweet ID
-  const idMatch = TWEET_URL.match(/status\/(\d+)/);
-  if (!idMatch) throw new Error(`Could not extract tweet ID from: ${TWEET_URL}`);
-  const tweetId = idMatch[1];
-  console.log(`Tweet ID: ${tweetId}`);
+  // FIXED: Use shared URL parsing utility with strict validation
+  let urlParseResult;
+  try {
+    urlParseResult = extractAndValidateContentId(TWEET_URL);
+  } catch (error) {
+    throw new Error(`Invalid URL: ${error.message}`);
+  }
+  
+  const isArticleUrl = urlParseResult.isArticle;
+  const articleId = isArticleUrl ? urlParseResult.id : null;
+  const tweetId = !isArticleUrl ? urlParseResult.id : null;
+
+  if (isArticleUrl) {
+    console.log(`Article URL detected: ${TWEET_URL}`);
+    console.log(`Article ID: ${articleId}`);
+    // Articles require Playwright (API doesn't support article content)
+    if (!AUTH_TOKEN) {
+      throw new Error('Article URLs require X_AUTH_TOKEN (Playwright). API-only mode is not supported for articles.');
+    }
+  } else {
+    console.log(`Tweet ID: ${tweetId}`);
+  }
   console.log(`Auth token: ${AUTH_TOKEN ? 'available' : 'not set'} | API key: ${API_KEY ? 'available' : 'not set'}`);
 
   // ── Strategy: Run both methods, merge for most complete result ──
@@ -480,7 +516,8 @@ async function main() {
   let usedMethod = '';
 
   // ── Run both methods in parallel when both credentials available ──
-  if (AUTH_TOKEN && API_KEY) {
+  // For article URLs: API is skipped (Playwright only)
+  if (AUTH_TOKEN && API_KEY && !isArticleUrl) {
     console.log('\n[Strategy] Both credentials available — running Playwright + API in parallel...');
 
     const [pwOutcome, apiOutcome] = await Promise.allSettled([
@@ -539,6 +576,31 @@ async function main() {
       usedMethod = 'api';
     }
 
+  } else if (AUTH_TOKEN && isArticleUrl) {
+    // ── Article URL mode: Playwright only ──
+    try {
+      console.log('\n[Strategy] Article URL — using Playwright only (API not supported for articles)...');
+      const result = await scrapeTweet(TWEET_URL, { headless: true });
+      
+      if (!result) {
+        throw new Error('scrapeTweet returned null/undefined');
+      }
+      
+      tweet = result.tweet || null;
+      threadTweets = result.threadTweets || [];
+      article = result.article || null;
+      usedMethod = 'playwright';
+      console.log(`[Strategy] Playwright succeeded for article`);
+      
+      // If we got a tweet from the article scrape, use its ID
+      if (tweet && tweet.id && tweet.id !== 'unknown') {
+        tweetId = tweet.id;
+      }
+    } catch (err) {
+      console.error(`[Strategy] Playwright failed for article: ${err.message}`);
+      throw err;  // Re-throw for article URLs (no fallback available)
+    }
+
   } else if (AUTH_TOKEN) {
     // ── Playwright only ──
     try {
@@ -573,8 +635,43 @@ async function main() {
     }
   }
 
-  if (!tweet) {
-    throw new Error('Failed to fetch tweet data. Both Playwright and API failed (or neither credential was provided).');
+  if (!tweet && !article) {
+    throw new Error('Failed to fetch tweet/article data. Both Playwright and API failed (or neither credential was provided).');
+  }
+
+  // For article URLs without parent tweet: create minimal synthetic tweet
+  if (isArticleUrl && !tweet && article) {
+    console.log('Article scraped without parent tweet, creating synthetic entry...');
+    // FIXED: Use consistent synthetic ID format
+    const syntheticId = createSyntheticId(articleId);
+    tweet = {
+      id: syntheticId,
+      type: 'article',  // Type discriminator
+      isSynthetic: true,  // Flag to indicate this is not a real tweet
+      text: article.title || 'X Article',
+      createdAt: new Date().toISOString(),
+      url: TWEET_URL,
+      articleUrl: TWEET_URL,
+      author: {
+        name: 'Article Author',  // Placeholder - could be scraped from page
+        userName: 'article_bot',
+        profilePicture: article.coverImage || '',  // Use article cover as avatar
+        verified: false,
+        description: ''
+      },
+      entities: { urls: [{ url: TWEET_URL, expanded_url: TWEET_URL, display_url: 'x.com/i/article/...' }], hashtags: [], user_mentions: [] },
+      extendedEntities: { media: article.coverImage ? [{ media_url_https: article.coverImage, type: 'photo' }] : [] },
+      likeCount: 0,
+      retweetCount: 0,
+      replyCount: 0,
+      viewCount: 0,
+      bookmarkCount: 0,
+      quoteCount: 0,
+      conversationId: '',
+      inReplyToId: null,
+      inReplyToUserId: null,
+      isArticle: true
+    };
   }
 
   // ── Article handling: Playwright-only ──
@@ -597,9 +694,11 @@ async function main() {
   console.log(`Method: ${usedMethod}`);
 
   // Determine tweet type
-  const isArticle = !!articleUrl || !!article;
+  const isArticle = isArticleUrl || !!articleUrl || !!article;
   const isThread = threadTweets.length > 1;
   const allTweets = isThread ? threadTweets : [tweet];
+
+  if (!tweetId) tweetId = tweet.id;
 
   if (isThread) console.log(`Thread: ${allTweets.length} tweets from @${tweet.author.userName}`);
   if (isArticle) {
@@ -739,9 +838,23 @@ saved_at: "${new Date().toISOString()}"
   console.log(`\nGenerated: ${filename}`);
 
   // GitHub Actions output
+  // FIXED: Sanitize outputs to prevent injection attacks
   if (process.env.GITHUB_OUTPUT) {
-    fs.appendFileSync(process.env.GITHUB_OUTPUT, `filename=${filename}\n`);
-    fs.appendFileSync(process.env.GITHUB_OUTPUT, `tweet_id=${tweetId}\n`);
+    const outputId = tweetId || articleId;
+    if (!outputId) {
+      throw new Error('No valid ID available for GitHub Actions output');
+    }
+    
+    try {
+      // Sanitize and validate the ID
+      const safeOutputId = sanitizeAndValidateId(outputId);
+      const safeFilename = sanitizeGitHubOutput(filename);
+      
+      fs.appendFileSync(process.env.GITHUB_OUTPUT, `filename=${safeFilename}\n`);
+      fs.appendFileSync(process.env.GITHUB_OUTPUT, `tweet_id=${safeOutputId}\n`);
+    } catch (error) {
+      throw new Error(`GitHub output sanitization failed: ${error.message}`);
+    }
   }
 }
 

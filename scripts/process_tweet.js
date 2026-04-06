@@ -734,6 +734,23 @@ async function main() {
     tweetDataList.push({ tweet: tw, processedText, mediaFiles });
   }
 
+  // ── Remove previous versions of this tweet (duplicate detection) ──
+  const currentTweetId = tweetId || tweet.id;
+  const existingFiles = fs.readdirSync('tweets').filter(f => f.endsWith('.md'));
+  for (const existingFile of existingFiles) {
+    const filePath = `tweets/${existingFile}`;
+    try {
+      const head = fs.readFileSync(filePath, 'utf8').substring(0, 500);
+      const idMatch = head.match(/^tweet_id:\s*"?(\S+?)"?\s*$/m);
+      if (idMatch && idMatch[1] === currentTweetId) {
+        console.log(`[Dedup] Removing previous version: ${filePath}`);
+        fs.unlinkSync(filePath);
+      }
+    } catch (e) {
+      // Skip files that can't be read
+    }
+  }
+
   // ── Generate Markdown ──
 
   const firstTweetText = allTweets[0].text || '';

@@ -8,6 +8,7 @@ A fully decentralized, self-hosted, open-source solution to save tweets as markd
 - **Article Code Blocks**: Full article extraction including code blocks (API-only solutions strip them)
 - **Large Video Support**: Git LFS automatically handles videos over 100MB — no more push failures
 - **Smart Filenames**: Local LLM generates semantic titles like `author_building-a-cli-tool.md` instead of generic timestamps
+- **Auto-Translation**: Non-English tweets are automatically translated to English using a local Qwen LLM — English becomes the main content, with the original text preserved as a reference appendix at the bottom
 - **Privacy First**: All credentials stored locally in your browser - never sent to any server
 - **IPFS Ready**: Static frontend can be hosted on IPFS for censorship resistance
 - **Markdown Output**: Tweets saved as clean markdown with full metadata
@@ -137,7 +138,8 @@ Just paste any X/Twitter URL — the system automatically detects and handles:
 │  │  2. Runs Playwright + API in parallel           │   │
 │  │  3. Merges best results from both               │   │
 │  │  4. Generates smart filename via local LLM      │   │
-│  │  5. Commits to tweets/ (LFS for large videos)   │   │
+│  │  5. Translates non-English tweets to English    │   │
+│  │  6. Commits to tweets/ (LFS for large videos)   │   │
 │  └─────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -248,6 +250,37 @@ This is the tweet content with all the text preserved!
 |--------|-------|
 | Likes | 42 |
 | Retweets | 10 |
+```
+
+### Translated Tweet (Non-English → English)
+When a tweet is in a language other than English, it's automatically translated:
+
+```markdown
+---
+tweet_id: "2048349647949778982"
+type: "tweet"
+author: "axiaisacat"
+author_username: "@axiaisacat"
+---
+
+<img src="media/.../profile.jpg" alt="@axiaisacat" width="48" height="48"> **axiaisacat** · [@axiaisacat](https://x.com/axiaisacat)
+
+# Tweet by @axiaisacat
+
+Spent 20 yuan on a domain. Casually set up my own email service.
+
+cloud-mail — deployed on Cloudflare Workers. Sending/receiving emails, attachments, bulk mailing, Telegram push notifications, permission management — nothing's missing.
+
+Server cost: ¥0.
+Domain: already had one.
+
+👇 https://t.co/fIEcxwp6aX
+
+## Original (Chinese)
+
+花20块买了个域名。结果顺手搭了个自己的邮箱服务。cloud-mail，Cloudflare Workers 部署，收发邮件、附件、群发、TG 推送、权限管理一个不少。服务器费用：0元。域名：早就有了。
+
+👇
 ```
 
 ### Thread (Multiple Tweets)

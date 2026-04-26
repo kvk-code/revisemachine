@@ -88,7 +88,7 @@ jobs:
 
       - name: Generate Smart Title
         id: title
-        timeout-minutes: 2
+        timeout-minutes: 5
         run: |
           GENERATED_FILE="${{ steps.archive.outputs.generated_file }}"
           if [ -z "$GENERATED_FILE" ] || [ ! -f "$GENERATED_FILE" ]; then

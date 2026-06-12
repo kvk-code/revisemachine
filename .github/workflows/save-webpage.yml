@@ -1,0 +1,81 @@
+name: Save Webpage to Markdown
+
+on:
+  repository_dispatch:
+    types: [save-webpage]
+  workflow_dispatch:
+    inputs:
+      page_url:
+        description: 'Web page URL to archive (e.g., https://example.com/blog/post)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  save-webpage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium --with-deps
+
+      - name: Install Playwright deps (cached browsers)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Archive Webpage
+        id: archive
+        timeout-minutes: 10
+        env:
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          PAGE_URL: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.page_url || github.event.inputs.page_url }}
+        run: |
+          echo "Processing: $PAGE_URL"
+          node scripts/process_webpage.js
+
+      - name: Commit and Push
+        env:
+          PAGE_URL: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.page_url || github.event.inputs.page_url }}
+        run: |
+          git lfs install
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Pull latest changes to avoid conflicts from concurrent runs
+          git pull --rebase origin master || true
+
+          git add pages/
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Archive webpage: ${PAGE_URL}"
+
+            # Retry push with pull if it fails (handles race conditions)
+            git push || (git pull --rebase origin master && git push)
+          fi

@@ -905,14 +905,14 @@
                 <span class="section-icon icon-amber">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 </span>
-                Save a Tweet
+                Save a Tweet or Web Page
             </h2>
 
             <div style="display:flex;flex-direction:column;gap:1rem;">
                 <div>
-                    <label class="vault-label">Tweet URL</label>
-                    <input type="text" id="tweet-url" placeholder="https://x.com/username/status/1234567890" class="vault-input">
-                    <p class="vault-hint">Supports twitter.com and x.com URLs</p>
+                    <label class="vault-label">Tweet or Page URL</label>
+                    <input type="text" id="tweet-url" placeholder="https://x.com/user/status/123… or https://example.com/blog/post" class="vault-input">
+                    <p class="vault-hint">Tweet URLs (twitter.com / x.com) use the tweet pipeline; any other public http(s) URL is archived as a readable markdown page</p>
                 </div>
 
                 <button onclick="saveTweet()" id="save-btn" class="btn-vault btn-action" style="align-self:flex-start;">
@@ -1268,10 +1268,35 @@
                 return;
             }
 
-            const tweetIdMatch = tweetUrl.match(/status\/(\d+)/);
-            if (!tweetIdMatch) {
-                showStatus('save-status', 'Invalid tweet URL. Must contain /status/[tweet_id]', 'error');
-                return;
+            // ── Classify the URL: tweet → save-tweet pipeline, anything else → save-webpage ──
+            const isTweet = /^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/(?:\w{1,15}\/status|i\/article)\/\d+/.test(tweetUrl);
+            let eventType, clientPayload, workflowFile, contentLabel;
+
+            if (isTweet) {
+                eventType = 'save-tweet';
+                clientPayload = { tweet_url: tweetUrl };
+                workflowFile = 'save-tweet.yml';
+                contentLabel = 'tweet';
+            } else {
+                let parsedUrl;
+                try {
+                    parsedUrl = new URL(tweetUrl);
+                } catch (e) {
+                    showStatus('save-status', 'Invalid URL. Paste a tweet URL or any public http(s) page URL.', 'error');
+                    return;
+                }
+                if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+                    showStatus('save-status', 'Only http(s) URLs can be archived.', 'error');
+                    return;
+                }
+                if (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(parsedUrl.hostname) || parsedUrl.hostname.endsWith('.local')) {
+                    showStatus('save-status', 'Private/loopback hosts cannot be archived.', 'error');
+                    return;
+                }
+                eventType = 'save-webpage';
+                clientPayload = { page_url: tweetUrl };
+                workflowFile = 'save-webpage.yml';
+                contentLabel = 'web page';
             }
 
             const btn = document.getElementById('save-btn');
@@ -1288,18 +1313,16 @@
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        event_type: 'save-tweet',
-                        client_payload: {
-                            tweet_url: tweetUrl
-                        }
+                        event_type: eventType,
+                        client_payload: clientPayload
                     })
                 });
 
                 if (response.status === 204 || response.status === 200) {
-                    showStatus('save-status', `<strong>GitHub Action triggered successfully.</strong><br><span style="font-size:0.75rem;">Your tweet is being saved. Check your repository's <a href="https://github.com/${repo}/actions" target="_blank">Actions tab</a> for progress.</span>`, 'success');
+                    showStatus('save-status', `<strong>GitHub Action triggered successfully.</strong><br><span style="font-size:0.75rem;">Your ${contentLabel} is being saved. Check your repository's <a href="https://github.com/${repo}/actions" target="_blank">Actions tab</a> for progress.</span>`, 'success');
                     document.getElementById('tweet-url').value = '';
                 } else if (response.status === 404) {
-                    showStatus('save-status', `<strong>Repository not found or workflow missing</strong><br><span style="font-size:0.75rem;">Verify:<br>1. The repository "${repo}" exists<br>2. The workflow file (.github/workflows/save-tweet.yml) is present<br>3. Your PAT has 'Contents: Read & Write' permission</span>`, 'error');
+                    showStatus('save-status', `<strong>Repository not found or workflow missing</strong><br><span style="font-size:0.75rem;">Verify:<br>1. The repository "${repo}" exists<br>2. The workflow file (.github/workflows/${workflowFile}) is present<br>3. Your PAT has 'Contents: Read & Write' permission</span>`, 'error');
                 } else if (response.status === 401) {
                     showStatus('save-status', 'Authentication failed. Check your GitHub PAT.', 'error');
                 } else {

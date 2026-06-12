@@ -1,9 +1,10 @@
-# ReviseMachine - Save Tweets to Your GitHub Repository
+# ReviseMachine - Save Tweets & Web Pages to Your GitHub Repository
 
-A fully decentralized, self-hosted, open-source solution to save tweets as markdown files in your GitHub repository.
+A fully decentralized, self-hosted, open-source solution to save tweets **and any public web page** as markdown files in your GitHub repository.
 
 ## ✨ Features
 
+- **Web Page Archival (NEW)**: Paste any public http(s) URL — the page is rendered with Playwright, cleaned with Mozilla Readability (Firefox Reader Mode engine), and saved as readable markdown with images downloaded locally. Falls back to Jina Reader, and optionally to LLM extraction for hostile pages
 - **Dual-Mode Scraping**: Uses Playwright (auth_token) as primary, with twitterapi.io API as fallback — runs both in parallel and merges best results
 - **Article Code Blocks**: Full article extraction including code blocks (API-only solutions strip them)
 - **Large Video Support**: Git LFS automatically handles videos over 100MB — no more push failures
@@ -92,14 +93,18 @@ Now you can paste any tweet URL and save it!
 revisemachine/
 ├── .github/
 │   └── workflows/
-│       └── save-tweet.yml    # GitHub Action that fetches and saves tweets
+│       ├── save-tweet.yml    # GitHub Action that fetches and saves tweets
+│       └── save-webpage.yml  # GitHub Action that archives web pages
 ├── frontend/
 │   ├── index.html            # Static frontend (IPFS-ready, futuristic dark theme)
 │   └── interest.html         # Expression-of-interest form (encrypted submissions)
 ├── scripts/
-│   └── process_tweet.js      # Tweet processing logic (threads, articles, media)
+│   ├── process_tweet.js      # Tweet processing logic (threads, articles, media)
+│   └── process_webpage.js    # Web page archiver (Readability → markdown)
 ├── tweets/                   # Your saved tweets will appear here
 │   └── media/                # Downloaded images and videos
+├── pages/                    # Your saved web pages will appear here
+│   └── media/<page_id>/      # Downloaded page images
 ├── LICENSE
 └── README.md
 ```
@@ -114,8 +119,28 @@ Just paste any X/Twitter URL — the system automatically detects and handles:
 | **Thread** | Author has self-replies | All tweets by the author in chronological order |
 | **Article** | Tweet links to `x.com/i/article/` | Full article content (title, body, **code blocks**, cover image) |
 | **Video Tweet** | Media type `video` | Video file + thumbnail — large videos (>100MB) handled via Git LFS |
+| **Web Page (NEW)** | Any non-Twitter http(s) URL | Reader-mode markdown (headings, code blocks, tables), images localized to `pages/media/` |
 
-> **No manual selection needed!** The backend automatically determines the tweet type and archives accordingly.
+> **No manual selection needed!** The frontend automatically routes tweet URLs to the tweet pipeline and any other URL to the web page archiver.
+
+## 🌍 Saving Web Pages
+
+Paste any public web page URL into the same input box. The `save-webpage.yml` workflow extracts the readable content through a tiered pipeline — the first tier that yields enough content wins:
+
+| Tier | Method | Notes |
+|------|--------|-------|
+| 1 | **Playwright + Mozilla Readability** | Renders JS-heavy pages, strips nav/ads/boilerplate (same engine as Firefox Reader Mode), converts to GitHub-flavored Markdown via Turndown |
+| 2 | **Jina Reader** (`r.jina.ai`) | Free fallback when the page blocks headless browsers |
+| 3 | **LLM extraction** (optional) | Only runs if you add a `DASHSCOPE_API_KEY` repository secret. Sends the raw HTML to an OpenAI-compatible endpoint (default: DashScope `qwen3.7-plus`, 1M-token context) with a verbatim-extraction prompt, then validates the output against the page text with an n-gram overlap check |
+
+Details:
+
+- **Output**: `pages/<site>_<title>.md` with YAML frontmatter (`page_id`, `title`, `site`, `author`, `published`, `source_url`, `archived_at`, `word_count`, `extraction`)
+- **Dedup**: the `page_id` is a hash of the normalized URL (tracking parameters like `utm_*`/`fbclid` are stripped) — re-saving the same page updates the existing file instead of creating a duplicate
+- **Images**: up to 30 images per page are downloaded to `pages/media/<page_id>/` and links are rewritten to local paths
+- **Safety**: only public http(s) URLs are accepted; loopback/private-network hosts and non-http schemes are rejected
+- **Optional LLM tier config**: repository secret `DASHSCOPE_API_KEY` enables tier 3; repository variables `LLM_BASE_URL` and `LLM_MODEL` let you point it at any OpenAI-compatible provider. Without the secret, tiers 1–2 still cover the vast majority of pages
+- **Limitations**: paywalled/login-only content is not supported; YouTube and other video pages archive the visible text only
 
 ## 🔧 How It Works
 

@@ -176,6 +176,133 @@ function extractAndValidateContentId(url) {
   };
 }
 
+// ─── Generic Web Page URLs ──────────────────────────────────────────────────
+
+/**
+ * Tracking query parameters stripped during URL normalization so the same
+ * page shared through different channels maps to one page_id
+ * @type {RegExp}
+ */
+const TRACKING_PARAM_REGEX = /^(utm_\w+|fbclid|gclid|gclsrc|dclid|msclkid|igshid|mc_cid|mc_eid|ref_src|ref_url|cmpid|s_kwcid|twclid)$/i;
+
+/**
+ * Hostnames and IP ranges that must never be fetched by the archiver.
+ * The workflow runs on user-supplied URLs, so loopback/link-local/private
+ * targets are rejected outright.
+ * @type {RegExp[]}
+ */
+const BLOCKED_HOST_PATTERNS = [
+  /^localhost$/i,
+  /\.local$/i,
+  /^127\./,
+  /^0\./,
+  /^10\./,
+  /^192\.168\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^169\.254\./,
+  /^\[?::1\]?$/,
+  /^\[?fe80:/i,
+  /^\[?f[cd][0-9a-f]{2}:/i
+];
+
+/**
+ * Validates and normalizes a generic web page URL.
+ *
+ * Rules:
+ * - Scheme must be http or https (rejects file:, javascript:, data:, ftp:)
+ * - Loopback / private / link-local hosts are rejected
+ * - Twitter/X content URLs are rejected with a hint to use the tweet pipeline
+ * - Tracking parameters (utm_*, fbclid, ...) and fragments are stripped
+ * - Host is lowercased
+ *
+ * @param {string} url - URL to validate
+ * @returns {{valid: boolean, normalizedUrl: string|null, host: string|null, error: string|null}}
+ */
+function parseWebUrl(url) {
+  if (url == null || typeof url !== 'string' || url.trim().length === 0) {
+    return { valid: false, normalizedUrl: null, host: null, error: 'URL is required' };
+  }
+
+  const trimmed = url.trim();
+
+  if (parseTweetUrl(trimmed).valid) {
+    return {
+      valid: false, normalizedUrl: null, host: null,
+      error: 'This is a Twitter/X URL — use the tweet pipeline (save-tweet) instead'
+    };
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (e) {
+    return { valid: false, normalizedUrl: null, host: null, error: `Not a valid URL: ${e.message}` };
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return {
+      valid: false, normalizedUrl: null, host: null,
+      error: `Unsupported scheme "${parsed.protocol}" — only http and https are allowed`
+    };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (BLOCKED_HOST_PATTERNS.some(p => p.test(host))) {
+    return {
+      valid: false, normalizedUrl: null, host: null,
+      error: `Host "${host}" is loopback/private and cannot be archived`
+    };
+  }
+
+  for (const key of [...parsed.searchParams.keys()]) {
+    if (TRACKING_PARAM_REGEX.test(key)) {
+      parsed.searchParams.delete(key);
+    }
+  }
+  parsed.hash = '';
+  parsed.hostname = host;
+
+  return { valid: true, normalizedUrl: parsed.toString(), host, error: null };
+}
+
+/**
+ * Stable content ID for an archived web page: first 12 hex chars of
+ * sha256(normalized URL). Re-archiving the same page (even via a different
+ * tracking link) maps to the same ID, enabling dedup/versioning.
+ *
+ * @param {string} normalizedUrl - URL as returned by parseWebUrl().normalizedUrl
+ * @returns {string}
+ */
+function createPageId(normalizedUrl) {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(normalizedUrl).digest('hex').slice(0, 12);
+}
+
+/**
+ * Extracts and validates a web page URL with detailed error handling,
+ * mirroring extractAndValidateContentId() for the tweet pipeline.
+ *
+ * @param {string} url - URL to validate
+ * @returns {{pageId: string, normalizedUrl: string, host: string, originalUrl: string}}
+ * @throws {Error} - If the URL is invalid, with an actionable message
+ */
+function extractAndValidateWebUrl(url) {
+  const parsed = parseWebUrl(url);
+  if (!parsed.valid) {
+    throw new Error(
+      `Invalid web page URL: "${String(url).substring(0, 100)}"\n\n` +
+      `Reason: ${parsed.error}\n\n` +
+      `Expected: any public http(s) page, e.g. https://example.com/blog/post`
+    );
+  }
+  return {
+    pageId: createPageId(parsed.normalizedUrl),
+    normalizedUrl: parsed.normalizedUrl,
+    host: parsed.host,
+    originalUrl: url.trim()
+  };
+}
+
 module.exports = {
   TWEET_URL_REGEX,
   ARTICLE_URL_REGEX,
@@ -186,5 +313,8 @@ module.exports = {
   isTweetUrl,
   extractContentId,
   createSyntheticId,
-  extractAndValidateContentId
+  extractAndValidateContentId,
+  parseWebUrl,
+  createPageId,
+  extractAndValidateWebUrl
 };

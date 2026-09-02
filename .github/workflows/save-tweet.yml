@@ -15,7 +15,9 @@ permissions:
 
 jobs:
   save-tweet:
-    runs-on: ubuntu-latest
+    # Set the SAVE_TWEET_RUNNER repository variable to use a self-hosted or larger
+    # runner (the hosted runner runs out of disk when the local model is loaded).
+    runs-on: ${{ vars.SAVE_TWEET_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
 
     steps:
@@ -89,6 +91,13 @@ jobs:
       - name: Generate Smart Title
         id: title
         timeout-minutes: 5
+        env:
+          # With a key set, translation/titling run on qwen3.7-plus via the API and
+          # the local 0.5B model is never loaded. Without one, the local model is
+          # still used as a fallback.
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
         run: |
           GENERATED_FILE="${{ steps.archive.outputs.generated_file }}"
           if [ -z "$GENERATED_FILE" ] || [ ! -f "$GENERATED_FILE" ]; then
